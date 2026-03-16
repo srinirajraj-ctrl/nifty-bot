@@ -3,3 +3,5 @@ pandas
 numpy
 requests
 pytz
+gspread
+google-auth

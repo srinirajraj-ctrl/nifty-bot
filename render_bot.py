@@ -4,20 +4,32 @@ import numpy as np
 import requests
 import time
 import pytz
+import os
+import json
 from datetime import datetime
 import warnings
 warnings.filterwarnings('ignore')
 
 # ──────────────────────────────────────────
-#  ⚙️ FILL THESE IN
+#  ⚙️ CREDENTIALS — Set in Render Environment
 # ──────────────────────────────────────────
-import os
 TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "")
 TELEGRAM_CHAT_ID   = os.environ.get("TELEGRAM_CHAT_ID", "")
 
+# Google Sheets settings
+# SHEET_ID = your Google Sheet ID from URL
+# Example: https://docs.google.com/spreadsheets/d/SHEET_ID/edit
+GOOGLE_SHEET_ID    = os.environ.get("GOOGLE_SHEET_ID", "")
+GOOGLE_SHEET_NAME  = "Alerts"  # Sheet tab name
+
+# Google Service Account credentials JSON (paste as environment variable)
+GOOGLE_CREDS_JSON  = os.environ.get("GOOGLE_CREDS_JSON", "")
+
 SYMBOL       = "^NSEI"
 SYMBOL_NAME  = "NIFTY 50"
+TV_SYMBOL    = "NSE:NIFTY"   # TradingView symbol
 INTERVAL     = "5m"
+TV_INTERVAL  = "5"           # TradingView interval
 
 HLC3_SHIFT      = 1
 SLOW_EMA_PERIOD = 20
@@ -40,11 +52,90 @@ TRADE_START = "10:00"
 TRADE_END   = "14:30"
 
 
-# ── Telegram ──
+# ──────────────────────────────────────────
+#  📊 GOOGLE SHEETS
+# ──────────────────────────────────────────
+gsheet_client = None
+
+def init_gsheet():
+    """Initialize Google Sheets client."""
+    global gsheet_client
+    if not GOOGLE_CREDS_JSON or not GOOGLE_SHEET_ID:
+        print("⚠️ Google Sheets not configured — skipping")
+        return False
+    try:
+        import gspread
+        from google.oauth2.service_account import Credentials
+        creds_dict = json.loads(GOOGLE_CREDS_JSON)
+        scopes = [
+            "https://www.googleapis.com/auth/spreadsheets",
+            "https://www.googleapis.com/auth/drive"
+        ]
+        creds = Credentials.from_service_account_info(creds_dict, scopes=scopes)
+        gsheet_client = gspread.authorize(creds)
+        print("✅ Google Sheets connected!")
+        # Create header if sheet is empty
+        sh = gsheet_client.open_by_key(GOOGLE_SHEET_ID)
+        ws = sh.worksheet(GOOGLE_SHEET_NAME)
+        if ws.row_count < 2 or ws.cell(1,1).value != "Date":
+            ws.update('A1:K1', [[
+                "Date", "Time", "Signal", "Entry",
+                "Stop Loss", "Target1", "Target2",
+                "VWAP", "EMA200", "RSI", "Chart Link"
+            ]])
+            ws.format('A1:K1', {"textFormat": {"bold": True}})
+        return True
+    except Exception as e:
+        print(f"❌ Google Sheets init error: {e}")
+        return False
+
+def log_to_gsheet(signal, price, sl, t1, t2, vwap, ema200, rsi, chart_link):
+    """Log alert to Google Sheet."""
+    if not gsheet_client:
+        return
+    try:
+        ist = pytz.timezone('Asia/Kolkata')
+        now = datetime.now(ist)
+        sh  = gsheet_client.open_by_key(GOOGLE_SHEET_ID)
+        ws  = sh.worksheet(GOOGLE_SHEET_NAME)
+        ws.append_row([
+            now.strftime("%d-%b-%Y"),
+            now.strftime("%I:%M %p"),
+            signal,
+            round(price, 2),
+            round(sl, 2),
+            round(t1, 2),
+            round(t2, 2),
+            round(vwap, 2),
+            round(ema200, 2),
+            round(rsi, 1),
+            chart_link
+        ])
+        print(f"✅ Logged to Google Sheets!")
+    except Exception as e:
+        print(f"❌ Sheets log error: {e}")
+
+
+# ──────────────────────────────────────────
+#  📈 TRADINGVIEW CHART LINK
+# ──────────────────────────────────────────
+def get_chart_link():
+    """Generate TradingView chart link for current symbol."""
+    return f"https://www.tradingview.com/chart/?symbol={TV_SYMBOL}&interval={TV_INTERVAL}"
+
+
+# ──────────────────────────────────────────
+#  📡 TELEGRAM
+# ──────────────────────────────────────────
 def send_telegram(msg):
     try:
         url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
-        r = requests.post(url, data={"chat_id": TELEGRAM_CHAT_ID, "text": msg, "parse_mode": "HTML"}, timeout=10)
+        r = requests.post(url, data={
+            "chat_id": TELEGRAM_CHAT_ID,
+            "text": msg,
+            "parse_mode": "HTML",
+            "disable_web_page_preview": False
+        }, timeout=10)
         print("✅ Telegram sent!" if r.status_code == 200 else f"❌ {r.text}")
     except Exception as e:
         print(f"❌ {e}")
@@ -52,42 +143,64 @@ def send_telegram(msg):
 def get_ist_time():
     return datetime.now(pytz.timezone('Asia/Kolkata')).strftime("%d-%b-%Y %I:%M %p IST")
 
-def alert_buy(price, reasons):
+def alert_buy(price, reasons, vwap, ema200, rsi):
+    sl  = price - STOP_LOSS_PTS
+    t1  = price + (STOP_LOSS_PTS * TARGET1_RATIO)
+    t2  = price + (STOP_LOSS_PTS * TARGET2_RATIO)
+    chart = get_chart_link()
     send_telegram(
         f"🟢 <b>BUY — {SYMBOL_NAME}</b>\n\n"
         f"📈 Entry  : <b>{price:.2f}</b>\n"
-        f"🛑 SL     : <b>{price - STOP_LOSS_PTS:.2f}</b>\n"
-        f"🎯 Target1: <b>{price + STOP_LOSS_PTS * TARGET1_RATIO:.2f}</b>\n"
-        f"🎯 Target2: <b>{price + STOP_LOSS_PTS * TARGET2_RATIO:.2f}</b>\n\n"
+        f"🛑 SL     : <b>{sl:.2f}</b>  (-{STOP_LOSS_PTS} pts)\n"
+        f"🎯 Target1: <b>{t1:.2f}</b>  (+{STOP_LOSS_PTS * TARGET1_RATIO:.0f} pts)\n"
+        f"🎯 Target2: <b>{t2:.2f}</b>  (+{STOP_LOSS_PTS * TARGET2_RATIO:.0f} pts)\n\n"
         f"✅ Filters:\n{reasons}\n\n"
-        f"⏰ {get_ist_time()}\n⚠️ Paper trade first!"
+        f"📊 <a href='{chart}'>Open TradingView Chart</a>\n\n"
+        f"⏰ {get_ist_time()}\n"
+        f"⚠️ Paper trade first!"
     )
+    log_to_gsheet("BUY", price, sl, t1, t2, vwap, ema200, rsi, chart)
 
-def alert_sell(price, reasons):
+def alert_sell(price, reasons, vwap, ema200, rsi):
+    sl  = price + STOP_LOSS_PTS
+    t1  = price - (STOP_LOSS_PTS * TARGET1_RATIO)
+    t2  = price - (STOP_LOSS_PTS * TARGET2_RATIO)
+    chart = get_chart_link()
     send_telegram(
         f"🔴 <b>SELL — {SYMBOL_NAME}</b>\n\n"
         f"📉 Entry  : <b>{price:.2f}</b>\n"
-        f"🛑 SL     : <b>{price + STOP_LOSS_PTS:.2f}</b>\n"
-        f"🎯 Target1: <b>{price - STOP_LOSS_PTS * TARGET1_RATIO:.2f}</b>\n"
-        f"🎯 Target2: <b>{price - STOP_LOSS_PTS * TARGET2_RATIO:.2f}</b>\n\n"
+        f"🛑 SL     : <b>{sl:.2f}</b>  (+{STOP_LOSS_PTS} pts)\n"
+        f"🎯 Target1: <b>{t1:.2f}</b>  (-{STOP_LOSS_PTS * TARGET1_RATIO:.0f} pts)\n"
+        f"🎯 Target2: <b>{t2:.2f}</b>  (-{STOP_LOSS_PTS * TARGET2_RATIO:.0f} pts)\n\n"
         f"✅ Filters:\n{reasons}\n\n"
-        f"⏰ {get_ist_time()}\n⚠️ Paper trade first!"
+        f"📊 <a href='{chart}'>Open TradingView Chart</a>\n\n"
+        f"⏰ {get_ist_time()}\n"
+        f"⚠️ Paper trade first!"
     )
+    log_to_gsheet("SELL", price, sl, t1, t2, vwap, ema200, rsi, chart)
 
 def alert_skip(signal, reason):
-    send_telegram(f"⚠️ <b>SKIPPED {signal} — {SYMBOL_NAME}</b>\n{reason}\n⏰ {get_ist_time()}")
+    send_telegram(
+        f"⚠️ <b>SKIPPED {signal} — {SYMBOL_NAME}</b>\n"
+        f"{reason}\n"
+        f"📊 <a href='{get_chart_link()}'>Open Chart</a>\n"
+        f"⏰ {get_ist_time()}"
+    )
 
 def alert_startup():
     send_telegram(
-        f"🚀 <b>Bot Started on Render!</b>\n\n"
+        f"🚀 <b>Bot Started — 24/7 Auto!</b>\n\n"
         f"📊 {SYMBOL_NAME} | {INTERVAL}\n"
         f"🕐 {TRADE_START} – {TRADE_END} IST\n"
         f"✅ HLC3/KAU + 200EMA + VWAP + RSI\n"
+        f"📊 <a href='{get_chart_link()}'>Open TradingView Chart</a>\n\n"
         f"⏰ {get_ist_time()}"
     )
 
 
-# ── Time Check ──
+# ──────────────────────────────────────────
+#  🕐 TIME CHECK
+# ──────────────────────────────────────────
 def is_trading_time():
     ist = pytz.timezone('Asia/Kolkata')
     now = datetime.now(ist)
@@ -100,7 +213,9 @@ def is_trading_time():
     return start <= now <= end
 
 
-# ── Data Fetch ──
+# ──────────────────────────────────────────
+#  📦 DATA FETCH
+# ──────────────────────────────────────────
 def fetch_data(symbol, interval, period):
     try:
         df = yf.download(symbol, interval=interval, period=period, progress=False)
@@ -132,7 +247,9 @@ def fetch_htf(symbol):
         return None
 
 
-# ── Indicators ──
+# ──────────────────────────────────────────
+#  📐 INDICATORS
+# ──────────────────────────────────────────
 def kama(series, length=5, fastend=2.5, slowend=20):
     nfe = 2 / (fastend + 1)
     nse = 2 / (slowend + 1)
@@ -167,7 +284,9 @@ def vwap_calc(df):
     return df['cum_tpv'] / df['cum_vol']
 
 
-# ── Build Signals ──
+# ──────────────────────────────────────────
+#  🔬 BUILD SIGNALS
+# ──────────────────────────────────────────
 def build(df, df4h):
     df = df.copy()
     df['hlc3']     = (df['High'] + df['Low'] + df['Close']) / 3
@@ -185,7 +304,9 @@ def build(df, df4h):
     return df
 
 
-# ── Filter Checks ──
+# ──────────────────────────────────────────
+#  🔍 FILTER CHECKS
+# ──────────────────────────────────────────
 def check_buy(row):
     p, f = [], []
     (p if row['Close'] > row['vwap']   else f).append(f"{'✅' if row['Close'] > row['vwap']   else '❌'} VWAP {row['vwap']:.0f}")
@@ -203,7 +324,9 @@ def check_sell(row):
     return len(f) == 0, "\n".join(p + f)
 
 
-# ── Strategy Loop ──
+# ──────────────────────────────────────────
+#  🔄 STRATEGY LOOP
+# ──────────────────────────────────────────
 last_alert = {"time": None}
 
 def run_strategy():
@@ -229,23 +352,32 @@ def run_strategy():
         return
     if last['buy']:
         ok, reasons = check_buy(last)
-        alert_buy(last['Close'], reasons) if ok else alert_skip("BUY", reasons)
+        if ok:
+            alert_buy(last['Close'], reasons, last['vwap'], last['ema200'], last['rsi'])
+        else:
+            alert_skip("BUY", reasons)
         last_alert["time"] = ct
     elif last['sell']:
         ok, reasons = check_sell(last)
-        alert_sell(last['Close'], reasons) if ok else alert_skip("SELL", reasons)
+        if ok:
+            alert_sell(last['Close'], reasons, last['vwap'], last['ema200'], last['rsi'])
+        else:
+            alert_skip("SELL", reasons)
         last_alert["time"] = ct
     else:
         print("😴 No signal.")
 
 
-# ── Start ──
+# ──────────────────────────────────────────
+#  ▶️ START
+# ──────────────────────────────────────────
 if not TELEGRAM_BOT_TOKEN:
     print("❌ TELEGRAM_BOT_TOKEN not set!")
 elif not TELEGRAM_CHAT_ID:
     print("❌ TELEGRAM_CHAT_ID not set!")
 else:
     print("🚀 Bot starting...")
+    init_gsheet()
     alert_startup()
     while True:
         try:

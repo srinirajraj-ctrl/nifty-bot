@@ -6,30 +6,25 @@ import time
 import pytz
 import os
 import json
+import threading
 from datetime import datetime
+from http.server import HTTPServer, BaseHTTPRequestHandler
 import warnings
 warnings.filterwarnings('ignore')
 
 # ──────────────────────────────────────────
-#  ⚙️ CREDENTIALS — Set in Render Environment
+#  ⚙️ CREDENTIALS
 # ──────────────────────────────────────────
 TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "")
 TELEGRAM_CHAT_ID   = os.environ.get("TELEGRAM_CHAT_ID", "")
-
-# Google Sheets settings
-# SHEET_ID = your Google Sheet ID from URL
-# Example: https://docs.google.com/spreadsheets/d/SHEET_ID/edit
 GOOGLE_SHEET_ID    = os.environ.get("GOOGLE_SHEET_ID", "")
-GOOGLE_SHEET_NAME  = "Alerts"  # Sheet tab name
-
-# Google Service Account credentials JSON (paste as environment variable)
 GOOGLE_CREDS_JSON  = os.environ.get("GOOGLE_CREDS_JSON", "")
 
 SYMBOL       = "^NSEI"
 SYMBOL_NAME  = "NIFTY 50"
-TV_SYMBOL    = "NSE:NIFTY"   # TradingView symbol
+TV_SYMBOL    = "NSE:NIFTY"
 INTERVAL     = "5m"
-TV_INTERVAL  = "5"           # TradingView interval
+TV_INTERVAL  = "5"
 
 HLC3_SHIFT      = 1
 SLOW_EMA_PERIOD = 20
@@ -51,6 +46,73 @@ TARGET2_RATIO = 2.0
 TRADE_START = "10:00"
 TRADE_END   = "14:30"
 
+# ── Bot status for web page ──
+bot_status = {
+    "last_check": "Not started",
+    "last_signal": "None",
+    "last_close": 0,
+    "last_vwap": 0,
+    "last_rsi": 0,
+    "total_signals": 0
+}
+
+
+# ──────────────────────────────────────────
+#  🌐 WEB SERVER (keeps Render free plan alive)
+# ──────────────────────────────────────────
+class BotHandler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        self.send_response(200)
+        self.send_header('Content-type', 'text/html')
+        self.end_headers()
+        html = f"""
+        <html>
+        <head>
+            <title>Nifty Bot Status</title>
+            <meta http-equiv="refresh" content="60">
+            <style>
+                body {{ font-family: Arial; padding: 20px; background: #1a1a2e; color: #eee; }}
+                h1 {{ color: #00d4aa; }}
+                .card {{ background: #16213e; padding: 15px; border-radius: 10px; margin: 10px 0; }}
+                .green {{ color: #00ff88; }}
+                .red {{ color: #ff4444; }}
+                .yellow {{ color: #ffcc00; }}
+            </style>
+        </head>
+        <body>
+            <h1>🤖 Nifty Bot Live Status</h1>
+            <div class="card">
+                <p>📊 <b>Asset:</b> {SYMBOL_NAME}</p>
+                <p>⏱ <b>Timeframe:</b> {INTERVAL}</p>
+                <p>🕐 <b>Trading Hours:</b> {TRADE_START} – {TRADE_END} IST</p>
+            </div>
+            <div class="card">
+                <p>🔄 <b>Last Check:</b> {bot_status['last_check']}</p>
+                <p>📈 <b>Last Close:</b> {bot_status['last_close']}</p>
+                <p>📊 <b>Last VWAP:</b> {bot_status['last_vwap']}</p>
+                <p>📉 <b>Last RSI:</b> {bot_status['last_rsi']}</p>
+                <p>🎯 <b>Last Signal:</b> <span class="green">{bot_status['last_signal']}</span></p>
+                <p>📨 <b>Total Signals:</b> {bot_status['total_signals']}</p>
+            </div>
+            <div class="card">
+                <p>✅ HLC3/KAU + 200 EMA + VWAP + RSI Active</p>
+                <p class="green">🟢 Bot is Running 24/7</p>
+            </div>
+        </body>
+        </html>
+        """
+        self.wfile.write(html.encode())
+
+    def log_message(self, format, *args):
+        pass  # Suppress server logs
+
+
+def run_web_server():
+    port = int(os.environ.get("PORT", 10000))
+    server = HTTPServer(('0.0.0.0', port), BotHandler)
+    print(f"✅ Web server running on port {port}")
+    server.serve_forever()
+
 
 # ──────────────────────────────────────────
 #  📊 GOOGLE SHEETS
@@ -58,10 +120,9 @@ TRADE_END   = "14:30"
 gsheet_client = None
 
 def init_gsheet():
-    """Initialize Google Sheets client."""
     global gsheet_client
     if not GOOGLE_CREDS_JSON or not GOOGLE_SHEET_ID:
-        print("⚠️ Google Sheets not configured — skipping")
+        print("⚠️ Google Sheets not configured")
         return False
     try:
         import gspread
@@ -73,31 +134,28 @@ def init_gsheet():
         ]
         creds = Credentials.from_service_account_info(creds_dict, scopes=scopes)
         gsheet_client = gspread.authorize(creds)
-        print("✅ Google Sheets connected!")
-        # Create header if sheet is empty
         sh = gsheet_client.open_by_key(GOOGLE_SHEET_ID)
-        ws = sh.worksheet(GOOGLE_SHEET_NAME)
-        if ws.row_count < 2 or ws.cell(1,1).value != "Date":
+        ws = sh.sheet1
+        if ws.cell(1,1).value != "Date":
             ws.update('A1:K1', [[
-                "Date", "Time", "Signal", "Entry",
-                "Stop Loss", "Target1", "Target2",
-                "VWAP", "EMA200", "RSI", "Chart Link"
+                "Date","Time","Signal","Entry",
+                "Stop Loss","Target1","Target2",
+                "VWAP","EMA200","RSI","Chart Link"
             ]])
-            ws.format('A1:K1', {"textFormat": {"bold": True}})
+        print("✅ Google Sheets connected!")
         return True
     except Exception as e:
-        print(f"❌ Google Sheets init error: {e}")
+        print(f"❌ Sheets error: {e}")
         return False
 
-def log_to_gsheet(signal, price, sl, t1, t2, vwap, ema200, rsi, chart_link):
-    """Log alert to Google Sheet."""
+def log_to_gsheet(signal, price, sl, t1, t2, vwap, ema200, rsi, chart):
     if not gsheet_client:
         return
     try:
         ist = pytz.timezone('Asia/Kolkata')
         now = datetime.now(ist)
         sh  = gsheet_client.open_by_key(GOOGLE_SHEET_ID)
-        ws  = sh.worksheet(GOOGLE_SHEET_NAME)
+        ws  = sh.sheet1
         ws.append_row([
             now.strftime("%d-%b-%Y"),
             now.strftime("%I:%M %p"),
@@ -109,18 +167,17 @@ def log_to_gsheet(signal, price, sl, t1, t2, vwap, ema200, rsi, chart_link):
             round(vwap, 2),
             round(ema200, 2),
             round(rsi, 1),
-            chart_link
+            chart
         ])
-        print(f"✅ Logged to Google Sheets!")
+        print("✅ Logged to Google Sheets!")
     except Exception as e:
         print(f"❌ Sheets log error: {e}")
 
 
 # ──────────────────────────────────────────
-#  📈 TRADINGVIEW CHART LINK
+#  📈 TRADINGVIEW LINK
 # ──────────────────────────────────────────
 def get_chart_link():
-    """Generate TradingView chart link for current symbol."""
     return f"https://www.tradingview.com/chart/?symbol={TV_SYMBOL}&interval={TV_INTERVAL}"
 
 
@@ -148,6 +205,8 @@ def alert_buy(price, reasons, vwap, ema200, rsi):
     t1  = price + (STOP_LOSS_PTS * TARGET1_RATIO)
     t2  = price + (STOP_LOSS_PTS * TARGET2_RATIO)
     chart = get_chart_link()
+    bot_status['last_signal'] = f"BUY @ {price:.0f}"
+    bot_status['total_signals'] += 1
     send_telegram(
         f"🟢 <b>BUY — {SYMBOL_NAME}</b>\n\n"
         f"📈 Entry  : <b>{price:.2f}</b>\n"
@@ -166,6 +225,8 @@ def alert_sell(price, reasons, vwap, ema200, rsi):
     t1  = price - (STOP_LOSS_PTS * TARGET1_RATIO)
     t2  = price - (STOP_LOSS_PTS * TARGET2_RATIO)
     chart = get_chart_link()
+    bot_status['last_signal'] = f"SELL @ {price:.0f}"
+    bot_status['total_signals'] += 1
     send_telegram(
         f"🔴 <b>SELL — {SYMBOL_NAME}</b>\n\n"
         f"📉 Entry  : <b>{price:.2f}</b>\n"
@@ -331,6 +392,7 @@ last_alert = {"time": None}
 
 def run_strategy():
     print(f"\n{'='*40}\n🔄 {get_ist_time()}")
+    bot_status['last_check'] = get_ist_time()
     if not is_trading_time():
         print("⏸  Outside trading hours.")
         return
@@ -345,6 +407,9 @@ def run_strategy():
     df   = build(df, d4h)
     last = df.iloc[-2]
     ct   = str(df.index[-2])
+    bot_status['last_close'] = f"{last['Close']:.0f}"
+    bot_status['last_vwap']  = f"{last['vwap']:.0f}"
+    bot_status['last_rsi']   = f"{last['rsi']:.1f}"
     print(f"Close:{last['Close']:.0f} VWAP:{last['vwap']:.0f} EMA:{last['ema200']:.0f} RSI:{last['rsi']:.1f}")
     print(f"BUY:{last['buy']} SELL:{last['sell']}")
     if last_alert["time"] == ct:
@@ -367,17 +432,8 @@ def run_strategy():
     else:
         print("😴 No signal.")
 
-
-# ──────────────────────────────────────────
-#  ▶️ START
-# ──────────────────────────────────────────
-if not TELEGRAM_BOT_TOKEN:
-    print("❌ TELEGRAM_BOT_TOKEN not set!")
-elif not TELEGRAM_CHAT_ID:
-    print("❌ TELEGRAM_CHAT_ID not set!")
-else:
-    print("🚀 Bot starting...")
-    init_gsheet()
+def bot_loop():
+    print("🚀 Bot loop starting...")
     alert_startup()
     while True:
         try:
@@ -385,3 +441,21 @@ else:
         except Exception as e:
             print(f"❌ Error: {e}")
         time.sleep(60)
+
+
+# ──────────────────────────────────────────
+#  ▶️ START BOTH WEB SERVER + BOT
+# ──────────────────────────────────────────
+if not TELEGRAM_BOT_TOKEN:
+    print("❌ TELEGRAM_BOT_TOKEN not set!")
+elif not TELEGRAM_CHAT_ID:
+    print("❌ TELEGRAM_CHAT_ID not set!")
+else:
+    # Start bot in background thread
+    bot_thread = threading.Thread(target=bot_loop)
+    bot_thread.daemon = True
+    bot_thread.start()
+
+    # Start web server (keeps Render free plan alive)
+    init_gsheet()
+    run_web_server()

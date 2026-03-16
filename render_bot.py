@@ -11,8 +11,9 @@ warnings.filterwarnings('ignore')
 # ──────────────────────────────────────────
 #  ⚙️ FILL THESE IN
 # ──────────────────────────────────────────
-TELEGRAM_BOT_TOKEN = "YOUR_BOT_TOKEN_HERE"
-TELEGRAM_CHAT_ID   = "YOUR_CHAT_ID_HERE"
+import os
+TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "")
+TELEGRAM_CHAT_ID   = os.environ.get("TELEGRAM_CHAT_ID", "")
 
 SYMBOL       = "^NSEI"
 SYMBOL_NAME  = "NIFTY 50"
@@ -239,10 +240,10 @@ def run_strategy():
 
 
 # ── Start ──
-if "YOUR_BOT_TOKEN" in TELEGRAM_BOT_TOKEN:
-    print("❌ Fill in your TELEGRAM_BOT_TOKEN first!")
-elif "YOUR_CHAT_ID" in TELEGRAM_CHAT_ID:
-    print("❌ Fill in your TELEGRAM_CHAT_ID first!")
+if not TELEGRAM_BOT_TOKEN:
+    print("❌ TELEGRAM_BOT_TOKEN not set!")
+elif not TELEGRAM_CHAT_ID:
+    print("❌ TELEGRAM_CHAT_ID not set!")
 else:
     print("🚀 Bot starting...")
     alert_startup()

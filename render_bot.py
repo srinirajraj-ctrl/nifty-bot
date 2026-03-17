@@ -43,8 +43,8 @@ STOP_LOSS_PTS = 20
 TARGET1_RATIO = 1.5
 TARGET2_RATIO = 2.0
 
-TRADE_START = "10:00"
-TRADE_END   = "14:30"
+TRADE_START = "9:15"
+TRADE_END   = "15:30"
 
 # ── Bot status for web page ──
 bot_status = {

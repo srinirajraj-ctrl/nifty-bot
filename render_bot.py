@@ -66,8 +66,16 @@ bot_status = {
     "last_check"    : "Not started",
     "last_signal"   : "None",
     "total_signals" : 0,
-    "stocks_scanned": 0
+    "stocks_scanned": 0,
+    "wins"          : 0,
+    "losses"        : 0,
+    "active_trades" : 0,
 }
+
+# Active trades being monitored
+# {symbol: {name, signal, entry, sl, t1, t2, t1_hit, row}}
+active_trades = {}
+active_trades_lock = threading.Lock()
 
 
 # ──────────────────────────────────────────
@@ -79,16 +87,27 @@ class BotHandler(BaseHTTPRequestHandler):
         self.send_header('Content-type', 'text/html')
         self.end_headers()
         stock_list = "".join([f"<li>{s['name']}</li>" for s in STOCKS])
+        total = bot_status['wins'] + bot_status['losses']
+        win_rate = round(bot_status['wins'] / total * 100, 1) if total > 0 else 0
+
+        with active_trades_lock:
+            active_list = "".join([
+                f"<li>{t['name']} {t['signal']} @ {t['entry']:.2f}</li>"
+                for t in active_trades.values()
+            ]) or "<li>None</li>"
+
         html = f"""
         <html>
         <head>
             <title>Multi Stock Bot</title>
-            <meta http-equiv="refresh" content="60">
+            <meta http-equiv="refresh" content="30">
             <style>
                 body{{font-family:Arial;padding:20px;background:#1a1a2e;color:#eee}}
                 h1{{color:#00d4aa}}
                 .card{{background:#16213e;padding:15px;border-radius:10px;margin:10px 0}}
                 .green{{color:#00ff88}}
+                .red{{color:#ff4444}}
+                .yellow{{color:#ffcc00}}
                 ul{{columns:2}}
             </style>
         </head>
@@ -103,6 +122,13 @@ class BotHandler(BaseHTTPRequestHandler):
                 <p>&#x1F504; <b>Last Check:</b> {bot_status['last_check']}</p>
                 <p>&#x1F3AF; <b>Last Signal:</b> <span class="green">{bot_status['last_signal']}</span></p>
                 <p>&#x1F4E8; <b>Total Signals:</b> {bot_status['total_signals']}</p>
+                <p class="green">&#x2705; <b>Wins:</b> {bot_status['wins']}</p>
+                <p class="red">&#x274C; <b>Losses:</b> {bot_status['losses']}</p>
+                <p>&#x1F3C6; <b>Win Rate:</b> {win_rate}%</p>
+            </div>
+            <div class="card">
+                <p class="yellow">&#x1F4B0; <b>Active Trades:</b></p>
+                <ul>{active_list}</ul>
             </div>
             <div class="card">
                 <b>Scanning:</b><ul>{stock_list}</ul>
@@ -146,9 +172,10 @@ def init_gsheet():
         sh = gsheet_client.open_by_key(GOOGLE_SHEET_ID)
         ws = sh.sheet1
         if ws.cell(1,1).value != "Date":
-            ws.update('A1:K1', [[
+            ws.update('A1:P1', [[
                 "Date","Time","Stock","Signal","Entry",
-                "SL","T1","T2","Trend","AO Signal","AO Divergence"
+                "SL","T1","T2","Trend","AO Signal","AO Divergence",
+                "Confidence","Exit Price","Exit Time","P&L","Result"
             ]])
         print("✅ Google Sheets connected!")
         return True
@@ -156,9 +183,9 @@ def init_gsheet():
         print(f"❌ Sheets: {e}")
         return False
 
-def log_to_gsheet(name, signal, price, sl, t1, t2, trend, ao_signal, ao_div):
+def log_to_gsheet(name, signal, price, sl, t1, t2, trend, ao_signal, ao_div, confidence):
     if not gsheet_client:
-        return
+        return None
     try:
         ist = pytz.timezone('Asia/Kolkata')
         now = datetime.now(ist)
@@ -170,11 +197,30 @@ def log_to_gsheet(name, signal, price, sl, t1, t2, trend, ao_signal, ao_div):
             name, signal,
             round(price,2), round(sl,2),
             round(t1,2), round(t2,2),
-            trend, ao_signal, ao_div
+            trend, ao_signal, ao_div, confidence,
+            "", "", "", "MONITORING"
         ])
-        print(f"✅ Logged {name} to Sheets!")
+        all_rows = ws.get_all_values()
+        row_num  = len(all_rows)
+        print(f"✅ Logged {name} row {row_num}")
+        return row_num
     except Exception as e:
         print(f"❌ Sheets log: {e}")
+        return None
+
+def update_outcome(row_num, exit_price, exit_time, pnl, result):
+    if not gsheet_client or not row_num:
+        return
+    try:
+        sh = gsheet_client.open_by_key(GOOGLE_SHEET_ID)
+        ws = sh.sheet1
+        ws.update_cell(row_num, 13, round(exit_price, 2))
+        ws.update_cell(row_num, 14, exit_time)
+        ws.update_cell(row_num, 15, round(pnl, 2))
+        ws.update_cell(row_num, 16, result)
+        print(f"✅ Updated outcome row {row_num}: {result}")
+    except Exception as e:
+        print(f"❌ Outcome update: {e}")
 
 
 # ──────────────────────────────────────────
@@ -195,6 +241,9 @@ def send_telegram(msg):
 
 def get_ist_time():
     return datetime.now(pytz.timezone('Asia/Kolkata')).strftime("%d-%b-%Y %I:%M %p IST")
+
+def get_ist_time_short():
+    return datetime.now(pytz.timezone('Asia/Kolkata')).strftime("%I:%M %p")
 
 def get_chart_link(tv_symbol):
     return f"https://www.tradingview.com/chart/?symbol={tv_symbol}&interval={TV_INTERVAL}"
@@ -217,16 +266,15 @@ def div_emoji(div):
 def trade_confidence(signal_type, trend, ao_signal, ao_div):
     score = 0
     if signal_type == "BUY":
-        if trend == "UPTREND":        score += 2
-        if ao_signal == "BULLISH":    score += 2
-        if ao_div == "BULLISH_DIV":   score += 3
-        if trend == "SIDEWAYS":       score += 1
+        if trend == "UPTREND":      score += 2
+        if ao_signal == "BULLISH":  score += 2
+        if ao_div == "BULLISH_DIV": score += 3
+        if trend == "SIDEWAYS":     score += 1
     else:
-        if trend == "DOWNTREND":      score += 2
-        if ao_signal == "BEARISH":    score += 2
-        if ao_div == "BEARISH_DIV":   score += 3
-        if trend == "SIDEWAYS":       score += 1
-
+        if trend == "DOWNTREND":    score += 2
+        if ao_signal == "BEARISH":  score += 2
+        if ao_div == "BEARISH_DIV": score += 3
+        if trend == "SIDEWAYS":     score += 1
     if score >= 6: return "🔥 VERY STRONG"
     if score >= 4: return "💪 STRONG"
     if score >= 2: return "👍 MODERATE"
@@ -258,11 +306,32 @@ def alert_signal(stock, price, signal_type, trend, ao_signal, ao_div):
         f"🎯 <b>Confidence: {conf}</b>\n"
         f"━━━━━━━━━━━━━━━\n\n"
         f"✅ HLC3/KAU Crossover\n"
+        f"👁 <b>Monitoring trade live...</b>\n"
         f"📊 <a href='{chart}'>Open TradingView Chart</a>\n\n"
         f"⏰ {get_ist_time()}\n"
         f"⚠️ Paper trade first!"
     )
-    log_to_gsheet(stock['name'], signal_type, price, sl, t1, t2, trend, ao_signal, ao_div)
+
+    row_num = log_to_gsheet(
+        stock['name'], signal_type, price, sl, t1, t2,
+        trend, ao_signal, ao_div, conf
+    )
+
+    # Add to active trades for live monitoring
+    with active_trades_lock:
+        active_trades[stock['symbol']] = {
+            "name"    : stock['name'],
+            "signal"  : signal_type,
+            "entry"   : price,
+            "sl"      : sl,
+            "t1"      : t1,
+            "t2"      : t2,
+            "t1_hit"  : False,
+            "row"     : row_num,
+            "symbol"  : stock['symbol'],
+        }
+        bot_status['active_trades'] = len(active_trades)
+    print(f"👁 Now monitoring {stock['name']} live!")
 
 def alert_startup():
     names = "\n".join([f"• {s['name']}" for s in STOCKS])
@@ -270,12 +339,13 @@ def alert_startup():
         f"🚀 <b>Multi Stock Bot Started!</b>\n\n"
         f"📊 Scanning {len(STOCKS)} stocks\n"
         f"🕐 {TRADE_START} – {TRADE_END} IST\n\n"
-        f"✅ Combined Signals:\n"
+        f"✅ Features:\n"
         f"• HLC3/KAU Crossover\n"
         f"• Market Structure (HH/HL/LH/LL)\n"
-        f"• Awesome Oscillator\n"
-        f"• AO Divergence\n"
-        f"• Confidence Score\n\n"
+        f"• Awesome Oscillator + Divergence\n"
+        f"• Confidence Score\n"
+        f"• Live Trade Monitoring\n"
+        f"• Auto Outcome to Google Sheets\n\n"
         f"📋 Stocks:\n{names}\n\n"
         f"⏰ {get_ist_time()}"
     )
@@ -328,6 +398,16 @@ def fetch_htf(symbol):
         print(f"❌ HTF {symbol}: {e}")
         return None
 
+def get_current_price(symbol):
+    try:
+        df = yf.download(symbol, interval="1m", period="1d", progress=False)
+        if df.empty:
+            return None
+        df.columns = [c[0] if isinstance(c, tuple) else c for c in df.columns]
+        return float(df['Close'].iloc[-1])
+    except:
+        return None
+
 
 # ──────────────────────────────────────────
 #  📐 INDICATORS
@@ -364,98 +444,67 @@ def detect_market_structure(df):
     lows  = df['Low'].values
     n     = len(highs)
     lb    = SWING_LOOKBACK
-
     swing_highs = []
     swing_lows  = []
-
     for i in range(lb, n - lb):
         if highs[i] == max(highs[i-lb:i+lb+1]):
             swing_highs.append(highs[i])
         if lows[i] == min(lows[i-lb:i+lb+1]):
             swing_lows.append(lows[i])
-
     if len(swing_highs) < 2 or len(swing_lows) < 2:
         return "SIDEWAYS"
-
-    last_sh = swing_highs[-1]
-    prev_sh = swing_highs[-2]
-    last_sl = swing_lows[-1]
-    prev_sl = swing_lows[-2]
-
-    hh = last_sh > prev_sh
-    hl = last_sl > prev_sl
-    lh = last_sh < prev_sh
-    ll = last_sl < prev_sl
-
+    hh = swing_highs[-1] > swing_highs[-2]
+    hl = swing_lows[-1]  > swing_lows[-2]
+    lh = swing_highs[-1] < swing_highs[-2]
+    ll = swing_lows[-1]  < swing_lows[-2]
     if hh and hl:   return "UPTREND"
     elif lh and ll: return "DOWNTREND"
     else:           return "SIDEWAYS"
 
 
 # ──────────────────────────────────────────
-#  📊 AWESOME OSCILLATOR ANALYSIS
+#  📊 AO ANALYSIS
 # ──────────────────────────────────────────
 def analyze_ao(df):
-    ao = awesome_oscillator(df)
-    df = df.copy()
+    ao       = awesome_oscillator(df)
+    df       = df.copy()
     df['ao'] = ao
     df_clean = df.dropna(subset=['ao'])
-
     if len(df_clean) < 5:
         return "NEUTRAL", "NO_DIV"
-
-    ao_v  = df_clean['ao'].values
-    cl    = df_clean['Close'].values
-
-    # ── AO Signal ──
+    ao_v = df_clean['ao'].values
+    cl   = df_clean['Close'].values
     ao_signal = "NEUTRAL"
     if len(ao_v) >= 2:
-        # Cross above zero = bullish
         if ao_v[-1] > 0 and ao_v[-2] <= 0:
             ao_signal = "BULLISH"
-        # Cross below zero = bearish
         elif ao_v[-1] < 0 and ao_v[-2] >= 0:
             ao_signal = "BEARISH"
-        # Saucer bullish: above zero, dip then rise
-        elif (len(ao_v) >= 3 and ao_v[-1] > 0 and
-              ao_v[-2] > 0 and ao_v[-3] > 0 and
+        elif (len(ao_v) >= 3 and ao_v[-1] > 0 and ao_v[-2] > 0 and ao_v[-3] > 0 and
               ao_v[-1] > ao_v[-2] < ao_v[-3]):
             ao_signal = "BULLISH"
-        # Saucer bearish: below zero, rise then fall
-        elif (len(ao_v) >= 3 and ao_v[-1] < 0 and
-              ao_v[-2] < 0 and ao_v[-3] < 0 and
+        elif (len(ao_v) >= 3 and ao_v[-1] < 0 and ao_v[-2] < 0 and ao_v[-3] < 0 and
               ao_v[-1] < ao_v[-2] > ao_v[-3]):
             ao_signal = "BEARISH"
-
-    # ── AO Divergence ──
-    ao_div = "NO_DIV"
+    ao_div   = "NO_DIV"
     lookback = min(30, len(cl) - 1)
     rc = cl[-lookback:]
     ra = ao_v[-lookback:]
-
-    # Find price swing lows and highs
-    p_lows  = [i for i in range(1, len(rc)-1)
-               if rc[i] < rc[i-1] and rc[i] < rc[i+1]]
-    p_highs = [i for i in range(1, len(rc)-1)
-               if rc[i] > rc[i-1] and rc[i] > rc[i+1]]
-
-    # Bullish divergence: price lower low but AO higher low
+    p_lows  = [i for i in range(1, len(rc)-1) if rc[i] < rc[i-1] and rc[i] < rc[i+1]]
+    p_highs = [i for i in range(1, len(rc)-1) if rc[i] > rc[i-1] and rc[i] > rc[i+1]]
     if len(p_lows) >= 2:
         pl1, pl2 = p_lows[-2], p_lows[-1]
         if rc[pl2] < rc[pl1] and ra[pl2] > ra[pl1]:
             ao_div = "BULLISH_DIV"
-
-    # Bearish divergence: price higher high but AO lower high
     if len(p_highs) >= 2:
         ph1, ph2 = p_highs[-2], p_highs[-1]
         if rc[ph2] > rc[ph1] and ra[ph2] < ra[ph1]:
             ao_div = "BEARISH_DIV"
-
     return ao_signal, ao_div
 
 
 # ──────────────────────────────────────────
-#  🔬 BUILD HLC3/KAU SIGNALS
+#  🔬 BUILD SIGNALS
 # ──────────────────────────────────────────
 def build(df, df4h):
     df = df.copy()
@@ -472,6 +521,124 @@ def build(df, df4h):
 
 
 # ──────────────────────────────────────────
+#  👁 LIVE TRADE MONITOR
+# ──────────────────────────────────────────
+def monitor_trades():
+    """Runs in background — checks active trades every minute."""
+    while True:
+        try:
+            with active_trades_lock:
+                symbols = list(active_trades.keys())
+
+            market_closed = not is_trading_time()
+
+            for symbol in symbols:
+                with active_trades_lock:
+                    if symbol not in active_trades:
+                        continue
+                    trade = active_trades[symbol].copy()
+
+                price = get_current_price(symbol)
+                if price is None:
+                    continue
+
+                name    = trade['name']
+                signal  = trade['signal']
+                entry   = trade['entry']
+                sl      = trade['sl']
+                t1      = trade['t1']
+                t2      = trade['t2']
+                t1_hit  = trade['t1_hit']
+                row     = trade['row']
+                exit_time = get_ist_time_short()
+
+                result = None
+                exit_price = price
+
+                if signal == "BUY":
+                    pnl = price - entry
+                    if price >= t2:
+                        result = "✅ WIN T2"
+                        bot_status['wins'] += 1
+                    elif price >= t1 and not t1_hit:
+                        # T1 hit — alert but keep monitoring for T2
+                        send_telegram(
+                            f"🎯 <b>TARGET 1 HIT — {name}</b>\n\n"
+                            f"Signal : BUY\n"
+                            f"Entry  : {entry:.2f}\n"
+                            f"T1 Hit : {price:.2f}\n"
+                            f"P&L    : +{pnl:.2f} pts\n\n"
+                            f"👁 Still watching for T2...\n"
+                            f"⏰ {get_ist_time()}"
+                        )
+                        with active_trades_lock:
+                            if symbol in active_trades:
+                                active_trades[symbol]['t1_hit'] = True
+                        continue
+                    elif price <= sl:
+                        result = "❌ LOSS SL"
+                        pnl    = price - entry
+                        bot_status['losses'] += 1
+                    elif market_closed:
+                        result = "🔔 CLOSED EOD"
+                        pnl    = price - entry
+
+                else:  # SELL
+                    pnl = entry - price
+                    if price <= t2:
+                        result = "✅ WIN T2"
+                        bot_status['wins'] += 1
+                    elif price <= t1 and not t1_hit:
+                        send_telegram(
+                            f"🎯 <b>TARGET 1 HIT — {name}</b>\n\n"
+                            f"Signal : SELL\n"
+                            f"Entry  : {entry:.2f}\n"
+                            f"T1 Hit : {price:.2f}\n"
+                            f"P&L    : +{pnl:.2f} pts\n\n"
+                            f"👁 Still watching for T2...\n"
+                            f"⏰ {get_ist_time()}"
+                        )
+                        with active_trades_lock:
+                            if symbol in active_trades:
+                                active_trades[symbol]['t1_hit'] = True
+                        continue
+                    elif price >= sl:
+                        result = "❌ LOSS SL"
+                        pnl    = entry - price
+                        bot_status['losses'] += 1
+                    elif market_closed:
+                        result = "🔔 CLOSED EOD"
+                        pnl    = entry - price
+
+                if result:
+                    # Send final outcome alert
+                    emoji = "✅" if "WIN" in result else "❌" if "LOSS" in result else "🔔"
+                    send_telegram(
+                        f"{emoji} <b>OUTCOME — {name}</b>\n\n"
+                        f"Signal : {signal}\n"
+                        f"Entry  : {entry:.2f}\n"
+                        f"Exit   : {exit_price:.2f}\n"
+                        f"P&L    : {pnl:+.2f} pts\n\n"
+                        f"Result : <b>{result}</b>\n\n"
+                        f"⏰ {get_ist_time()}"
+                    )
+                    # Update Google Sheet
+                    update_outcome(row, exit_price, exit_time, pnl, result)
+
+                    # Remove from active trades
+                    with active_trades_lock:
+                        active_trades.pop(symbol, None)
+                        bot_status['active_trades'] = len(active_trades)
+
+                    print(f"✅ Trade closed: {name} {result} P&L:{pnl:.2f}")
+
+        except Exception as e:
+            print(f"❌ Monitor error: {e}")
+
+        time.sleep(60)
+
+
+# ──────────────────────────────────────────
 #  🔄 SCAN EACH STOCK
 # ──────────────────────────────────────────
 last_alerts = {}
@@ -480,42 +647,35 @@ def scan_stock(stock):
     symbol = stock['symbol']
     name   = stock['name']
     try:
+        # Skip if already in active trade
+        with active_trades_lock:
+            if symbol in active_trades:
+                return
+
         df  = fetch_data(symbol)
         d4h = fetch_htf(symbol)
-
         if df is None or d4h is None:
-            print(f"⚠️ {name}: No data")
             return
         if len(df) < 40:
-            print(f"⚠️ {name}: Not enough data")
             return
 
-        # Build HLC3/KAU signals
-        df = build(df, d4h)
+        df   = build(df, d4h)
         last = df.iloc[-2]
         ct   = str(df.index[-2])
 
-        print(f"  {name}: Close:{last['Close']:.2f} BUY:{last['buy']} SELL:{last['sell']}")
+        print(f"  {name}: {last['Close']:.2f} BUY:{last['buy']} SELL:{last['sell']}")
 
-        # Skip if already alerted this candle
         if last_alerts.get(symbol) == ct:
             return
-
-        # Check for signal
         if not last['buy'] and not last['sell']:
             return
 
-        signal_type = "BUY" if last['buy'] else "SELL"
-
-        # Market structure analysis
-        trend = detect_market_structure(df)
-
-        # AO analysis
+        signal_type      = "BUY" if last['buy'] else "SELL"
+        trend            = detect_market_structure(df)
         ao_signal, ao_div = analyze_ao(df)
 
-        print(f"  ✅ {signal_type} — {name} | Trend:{trend} AO:{ao_signal} Div:{ao_div}")
+        print(f"  ✅ {signal_type} {name} | {trend} | {ao_signal} | {ao_div}")
 
-        # Send combined alert
         alert_signal(stock, last['Close'], signal_type, trend, ao_signal, ao_div)
         last_alerts[symbol] = ct
 
@@ -535,8 +695,6 @@ def run_strategy():
         return
 
     print(f"Scanning {len(STOCKS)} stocks...")
-    bot_status['stocks_scanned'] = len(STOCKS)
-
     for stock in STOCKS:
         scan_stock(stock)
         time.sleep(2)
@@ -560,8 +718,16 @@ if not TELEGRAM_BOT_TOKEN:
 elif not TELEGRAM_CHAT_ID:
     print("❌ TELEGRAM_CHAT_ID not set!")
 else:
+    # Start live trade monitor in background
+    monitor_thread = threading.Thread(target=monitor_trades)
+    monitor_thread.daemon = True
+    monitor_thread.start()
+
+    # Start main bot loop
     bot_thread = threading.Thread(target=bot_loop)
     bot_thread.daemon = True
     bot_thread.start()
+
+    # Start web server
     init_gsheet()
     run_web_server()

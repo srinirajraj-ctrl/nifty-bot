@@ -376,7 +376,6 @@ def build(df, df4h):
 # ──────────────────────────────────────────
 def check_buy(row):
     p, f = [], []
-    (p if row['Close'] > row['vwap']   else f).append(f"{'✅' if row['Close'] > row['vwap']   else '❌'} VWAP {row['vwap']:.0f}")
     (p if row['Close'] > row['ema200'] else f).append(f"{'✅' if row['Close'] > row['ema200'] else '❌'} 200 EMA {row['ema200']:.0f}")
     ok = RSI_BUY_MIN <= row['rsi'] <= RSI_BUY_MAX
     (p if ok else f).append(f"{'✅' if ok else '❌'} RSI {row['rsi']:.1f}")
@@ -384,7 +383,6 @@ def check_buy(row):
 
 def check_sell(row):
     p, f = [], []
-    (p if row['Close'] < row['vwap']   else f).append(f"{'✅' if row['Close'] < row['vwap']   else '❌'} VWAP {row['vwap']:.0f}")
     (p if row['Close'] < row['ema200'] else f).append(f"{'✅' if row['Close'] < row['ema200'] else '❌'} 200 EMA {row['ema200']:.0f}")
     ok = RSI_SELL_MIN <= row['rsi'] <= RSI_SELL_MAX
     (p if ok else f).append(f"{'✅' if ok else '❌'} RSI {row['rsi']:.1f}")

@@ -32,13 +32,6 @@ KAMA_LENGTH     = 5
 KAMA_FASTEND    = 2.5
 KAMA_SLOWEND    = 20
 
-EMA_PERIOD   = 200
-RSI_PERIOD   = 14
-RSI_BUY_MIN  = 50
-RSI_BUY_MAX  = 70
-RSI_SELL_MIN = 30
-RSI_SELL_MAX = 50
-
 STOP_LOSS_PTS = 20
 TARGET1_RATIO = 1.5
 TARGET2_RATIO = 2.0
@@ -46,19 +39,18 @@ TARGET2_RATIO = 2.0
 TRADE_START = "9:15"
 TRADE_END   = "15:30"
 
-# ── Bot status for web page ──
 bot_status = {
     "last_check": "Not started",
     "last_signal": "None",
     "last_close": 0,
-    "last_vwap": 0,
-    "last_rsi": 0,
+    "last_bfma": 0,
+    "last_bsma": 0,
     "total_signals": 0
 }
 
 
 # ──────────────────────────────────────────
-#  🌐 WEB SERVER (keeps Render free plan alive)
+#  🌐 WEB SERVER
 # ──────────────────────────────────────────
 class BotHandler(BaseHTTPRequestHandler):
     def do_GET(self):
@@ -75,28 +67,26 @@ class BotHandler(BaseHTTPRequestHandler):
                 h1 {{ color: #00d4aa; }}
                 .card {{ background: #16213e; padding: 15px; border-radius: 10px; margin: 10px 0; }}
                 .green {{ color: #00ff88; }}
-                .red {{ color: #ff4444; }}
-                .yellow {{ color: #ffcc00; }}
             </style>
         </head>
         <body>
-            <h1>🤖 Nifty Bot Live Status</h1>
+            <h1>&#x1F916; Nifty Bot Live Status</h1>
             <div class="card">
-                <p>📊 <b>Asset:</b> {SYMBOL_NAME}</p>
-                <p>⏱ <b>Timeframe:</b> {INTERVAL}</p>
-                <p>🕐 <b>Trading Hours:</b> {TRADE_START} – {TRADE_END} IST</p>
+                <p>&#x1F4CA; <b>Asset:</b> {SYMBOL_NAME}</p>
+                <p>&#x23F1; <b>Timeframe:</b> {INTERVAL}</p>
+                <p>&#x1F557; <b>Trading Hours:</b> {TRADE_START} - {TRADE_END} IST</p>
             </div>
             <div class="card">
-                <p>🔄 <b>Last Check:</b> {bot_status['last_check']}</p>
-                <p>📈 <b>Last Close:</b> {bot_status['last_close']}</p>
-                <p>📊 <b>Last VWAP:</b> {bot_status['last_vwap']}</p>
-                <p>📉 <b>Last RSI:</b> {bot_status['last_rsi']}</p>
-                <p>🎯 <b>Last Signal:</b> <span class="green">{bot_status['last_signal']}</span></p>
-                <p>📨 <b>Total Signals:</b> {bot_status['total_signals']}</p>
+                <p>&#x1F504; <b>Last Check:</b> {bot_status['last_check']}</p>
+                <p>&#x1F4C8; <b>Last Close:</b> {bot_status['last_close']}</p>
+                <p>&#x1F4C9; <b>bfma:</b> {bot_status['last_bfma']}</p>
+                <p>&#x1F4CA; <b>bsma:</b> {bot_status['last_bsma']}</p>
+                <p>&#x1F3AF; <b>Last Signal:</b> <span class="green">{bot_status['last_signal']}</span></p>
+                <p>&#x1F4E8; <b>Total Signals:</b> {bot_status['total_signals']}</p>
             </div>
             <div class="card">
-                <p>✅ HLC3/KAU + 200 EMA + VWAP + RSI Active</p>
-                <p class="green">🟢 Bot is Running 24/7</p>
+                <p>&#x2705; HLC3/KAU Active</p>
+                <p class="green">&#x1F7E2; Bot is Running 24/7</p>
             </div>
         </body>
         </html>
@@ -104,7 +94,7 @@ class BotHandler(BaseHTTPRequestHandler):
         self.wfile.write(html.encode())
 
     def log_message(self, format, *args):
-        pass  # Suppress server logs
+        pass
 
 
 def run_web_server():
@@ -137,10 +127,9 @@ def init_gsheet():
         sh = gsheet_client.open_by_key(GOOGLE_SHEET_ID)
         ws = sh.sheet1
         if ws.cell(1,1).value != "Date":
-            ws.update('A1:K1', [[
+            ws.update('A1:H1', [[
                 "Date","Time","Signal","Entry",
-                "Stop Loss","Target1","Target2",
-                "VWAP","EMA200","RSI","Chart Link"
+                "Stop Loss","Target1","Target2","Chart Link"
             ]])
         print("✅ Google Sheets connected!")
         return True
@@ -148,7 +137,7 @@ def init_gsheet():
         print(f"❌ Sheets error: {e}")
         return False
 
-def log_to_gsheet(signal, price, sl, t1, t2, vwap, ema200, rsi, chart):
+def log_to_gsheet(signal, price, sl, t1, t2, chart):
     if not gsheet_client:
         return
     try:
@@ -164,9 +153,6 @@ def log_to_gsheet(signal, price, sl, t1, t2, vwap, ema200, rsi, chart):
             round(sl, 2),
             round(t1, 2),
             round(t2, 2),
-            round(vwap, 2),
-            round(ema200, 2),
-            round(rsi, 1),
             chart
         ])
         print("✅ Logged to Google Sheets!")
@@ -200,10 +186,10 @@ def send_telegram(msg):
 def get_ist_time():
     return datetime.now(pytz.timezone('Asia/Kolkata')).strftime("%d-%b-%Y %I:%M %p IST")
 
-def alert_buy(price, reasons, vwap, ema200, rsi):
-    sl  = price - STOP_LOSS_PTS
-    t1  = price + (STOP_LOSS_PTS * TARGET1_RATIO)
-    t2  = price + (STOP_LOSS_PTS * TARGET2_RATIO)
+def alert_buy(price):
+    sl    = price - STOP_LOSS_PTS
+    t1    = price + (STOP_LOSS_PTS * TARGET1_RATIO)
+    t2    = price + (STOP_LOSS_PTS * TARGET2_RATIO)
     chart = get_chart_link()
     bot_status['last_signal'] = f"BUY @ {price:.0f}"
     bot_status['total_signals'] += 1
@@ -213,17 +199,17 @@ def alert_buy(price, reasons, vwap, ema200, rsi):
         f"🛑 SL     : <b>{sl:.2f}</b>  (-{STOP_LOSS_PTS} pts)\n"
         f"🎯 Target1: <b>{t1:.2f}</b>  (+{STOP_LOSS_PTS * TARGET1_RATIO:.0f} pts)\n"
         f"🎯 Target2: <b>{t2:.2f}</b>  (+{STOP_LOSS_PTS * TARGET2_RATIO:.0f} pts)\n\n"
-        f"✅ Filters:\n{reasons}\n\n"
+        f"✅ HLC3/KAU Crossover\n\n"
         f"📊 <a href='{chart}'>Open TradingView Chart</a>\n\n"
         f"⏰ {get_ist_time()}\n"
         f"⚠️ Paper trade first!"
     )
-    log_to_gsheet("BUY", price, sl, t1, t2, vwap, ema200, rsi, chart)
+    log_to_gsheet("BUY", price, sl, t1, t2, chart)
 
-def alert_sell(price, reasons, vwap, ema200, rsi):
-    sl  = price + STOP_LOSS_PTS
-    t1  = price - (STOP_LOSS_PTS * TARGET1_RATIO)
-    t2  = price - (STOP_LOSS_PTS * TARGET2_RATIO)
+def alert_sell(price):
+    sl    = price + STOP_LOSS_PTS
+    t1    = price - (STOP_LOSS_PTS * TARGET1_RATIO)
+    t2    = price - (STOP_LOSS_PTS * TARGET2_RATIO)
     chart = get_chart_link()
     bot_status['last_signal'] = f"SELL @ {price:.0f}"
     bot_status['total_signals'] += 1
@@ -233,27 +219,19 @@ def alert_sell(price, reasons, vwap, ema200, rsi):
         f"🛑 SL     : <b>{sl:.2f}</b>  (+{STOP_LOSS_PTS} pts)\n"
         f"🎯 Target1: <b>{t1:.2f}</b>  (-{STOP_LOSS_PTS * TARGET1_RATIO:.0f} pts)\n"
         f"🎯 Target2: <b>{t2:.2f}</b>  (-{STOP_LOSS_PTS * TARGET2_RATIO:.0f} pts)\n\n"
-        f"✅ Filters:\n{reasons}\n\n"
+        f"✅ HLC3/KAU Crossover\n\n"
         f"📊 <a href='{chart}'>Open TradingView Chart</a>\n\n"
         f"⏰ {get_ist_time()}\n"
         f"⚠️ Paper trade first!"
     )
-    log_to_gsheet("SELL", price, sl, t1, t2, vwap, ema200, rsi, chart)
-
-def alert_skip(signal, reason):
-    send_telegram(
-        f"⚠️ <b>SKIPPED {signal} — {SYMBOL_NAME}</b>\n"
-        f"{reason}\n"
-        f"📊 <a href='{get_chart_link()}'>Open Chart</a>\n"
-        f"⏰ {get_ist_time()}"
-    )
+    log_to_gsheet("SELL", price, sl, t1, t2, chart)
 
 def alert_startup():
     send_telegram(
         f"🚀 <b>Bot Started — 24/7 Auto!</b>\n\n"
         f"📊 {SYMBOL_NAME} | {INTERVAL}\n"
         f"🕐 {TRADE_START} – {TRADE_END} IST\n"
-        f"✅ HLC3/KAU + 200EMA + VWAP + RSI\n"
+        f"✅ HLC3/KAU Signal Only\n"
         f"📊 <a href='{get_chart_link()}'>Open TradingView Chart</a>\n\n"
         f"⏰ {get_ist_time()}"
     )
@@ -330,26 +308,6 @@ def kama(series, length=5, fastend=2.5, slowend=20):
 def ema(series, n):
     return series.ewm(span=n, adjust=False).mean()
 
-def rsi_calc(series, n=14):
-    d  = series.diff()
-    ag = d.clip(lower=0).ewm(com=n-1, adjust=False).mean()
-    al = (-d.clip(upper=0)).ewm(com=n-1, adjust=False).mean()
-    return 100 - 100 / (1 + ag / al)
-
-def vwap_calc(df):
-    try:
-        df = df.copy()
-        df['hlc3'] = (df['High'] + df['Low'] + df['Close']) / 3
-        df['tpv']  = df['hlc3'] * df['Volume']
-        df['cum_tpv'] = df['tpv'].cumsum()
-        df['cum_vol']  = df['Volume'].cumsum()
-        result = df['cum_tpv'] / df['cum_vol']
-        result = result.fillna(method='ffill').fillna(df['hlc3'])
-        return result
-    except:
-        df['hlc3'] = (df['High'] + df['Low'] + df['Close']) / 3
-        return df['hlc3']
-
 
 # ──────────────────────────────────────────
 #  🔬 BUILD SIGNALS
@@ -365,28 +323,7 @@ def build(df, df4h):
     ps             = df['bsma'].shift(1)
     df['buy']      = (df['bfma'] > df['bsma']) & (pb <= ps)
     df['sell']     = (df['bfma'] < df['bsma']) & (pb >= ps)
-    df['ema200']   = ema(df['Close'], EMA_PERIOD)
-    df['rsi']      = rsi_calc(df['Close'], RSI_PERIOD)
-    df['vwap']     = vwap_calc(df)
     return df
-
-
-# ──────────────────────────────────────────
-#  🔍 FILTER CHECKS
-# ──────────────────────────────────────────
-def check_buy(row):
-    p, f = [], []
-    (p if row['Close'] > row['ema200'] else f).append(f"{'✅' if row['Close'] > row['ema200'] else '❌'} 200 EMA {row['ema200']:.0f}")
-    ok = RSI_BUY_MIN <= row['rsi'] <= RSI_BUY_MAX
-    (p if ok else f).append(f"{'✅' if ok else '❌'} RSI {row['rsi']:.1f}")
-    return len(f) == 0, "\n".join(p + f)
-
-def check_sell(row):
-    p, f = [], []
-    (p if row['Close'] < row['ema200'] else f).append(f"{'✅' if row['Close'] < row['ema200'] else '❌'} 200 EMA {row['ema200']:.0f}")
-    ok = RSI_SELL_MIN <= row['rsi'] <= RSI_SELL_MAX
-    (p if ok else f).append(f"{'✅' if ok else '❌'} RSI {row['rsi']:.1f}")
-    return len(f) == 0, "\n".join(p + f)
 
 
 # ──────────────────────────────────────────
@@ -405,33 +342,27 @@ def run_strategy():
     if df is None or d4h is None:
         print("❌ Data error")
         return
-    if len(df) < EMA_PERIOD + 10:
+    if len(df) < 30:
         print("❌ Not enough data")
         return
     df   = build(df, d4h)
     last = df.iloc[-2]
     ct   = str(df.index[-2])
     bot_status['last_close'] = f"{last['Close']:.0f}"
-    bot_status['last_vwap']  = f"{last['vwap']:.0f}"
-    bot_status['last_rsi']   = f"{last['rsi']:.1f}"
-    print(f"Close:{last['Close']:.0f} VWAP:{last['vwap']:.0f} EMA:{last['ema200']:.0f} RSI:{last['rsi']:.1f}")
+    bot_status['last_bfma']  = f"{last['bfma']:.2f}"
+    bot_status['last_bsma']  = f"{last['bsma']:.2f}"
+    print(f"Close:{last['Close']:.0f} bfma:{last['bfma']:.2f} bsma:{last['bsma']:.2f}")
     print(f"BUY:{last['buy']} SELL:{last['sell']}")
     if last_alert["time"] == ct:
         print("ℹ️  Already sent for this candle.")
         return
     if last['buy']:
-        ok, reasons = check_buy(last)
-        if ok:
-            alert_buy(last['Close'], reasons, last['vwap'], last['ema200'], last['rsi'])
-        else:
-            alert_skip("BUY", reasons)
+        print(f"✅ BUY SIGNAL at {last['Close']:.2f}")
+        alert_buy(last['Close'])
         last_alert["time"] = ct
     elif last['sell']:
-        ok, reasons = check_sell(last)
-        if ok:
-            alert_sell(last['Close'], reasons, last['vwap'], last['ema200'], last['rsi'])
-        else:
-            alert_skip("SELL", reasons)
+        print(f"✅ SELL SIGNAL at {last['Close']:.2f}")
+        alert_sell(last['Close'])
         last_alert["time"] = ct
     else:
         print("😴 No signal.")
@@ -448,18 +379,15 @@ def bot_loop():
 
 
 # ──────────────────────────────────────────
-#  ▶️ START BOTH WEB SERVER + BOT
+#  ▶️ START
 # ──────────────────────────────────────────
 if not TELEGRAM_BOT_TOKEN:
     print("❌ TELEGRAM_BOT_TOKEN not set!")
 elif not TELEGRAM_CHAT_ID:
     print("❌ TELEGRAM_CHAT_ID not set!")
 else:
-    # Start bot in background thread
     bot_thread = threading.Thread(target=bot_loop)
     bot_thread.daemon = True
     bot_thread.start()
-
-    # Start web server (keeps Render free plan alive)
     init_gsheet()
     run_web_server()

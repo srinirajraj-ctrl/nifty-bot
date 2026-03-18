@@ -337,12 +337,18 @@ def rsi_calc(series, n=14):
     return 100 - 100 / (1 + ag / al)
 
 def vwap_calc(df):
-    df = df.copy()
-    df['hlc3']    = (df['High'] + df['Low'] + df['Close']) / 3
-    df['tpv']     = df['hlc3'] * df['Volume']
-    df['cum_tpv'] = df['tpv'].cumsum()
-    df['cum_vol'] = df['Volume'].cumsum()
-    return df['cum_tpv'] / df['cum_vol']
+    try:
+        df = df.copy()
+        df['hlc3'] = (df['High'] + df['Low'] + df['Close']) / 3
+        df['tpv']  = df['hlc3'] * df['Volume']
+        df['cum_tpv'] = df['tpv'].cumsum()
+        df['cum_vol']  = df['Volume'].cumsum()
+        result = df['cum_tpv'] / df['cum_vol']
+        result = result.fillna(method='ffill').fillna(df['hlc3'])
+        return result
+    except:
+        df['hlc3'] = (df['High'] + df['Low'] + df['Close']) / 3
+        return df['hlc3']
 
 
 # ──────────────────────────────────────────

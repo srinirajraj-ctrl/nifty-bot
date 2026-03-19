@@ -59,7 +59,7 @@ KAMA_SLOWEND    = 20
 TARGET1_RATIO   = 1.5
 TARGET2_RATIO   = 2.0
 ATR_PERIOD      = 14
-ATR_MULTIPLIER  = 1.5   # Industry standard intraday
+ATR_MULTIPLIER  = 1.5
 TRADE_START     = "9:15"
 TRADE_END       = "15:30"
 SWING_LOOKBACK  = 5
@@ -96,7 +96,7 @@ class BotHandler(BaseHTTPRequestHandler):
         html = f"""
         <html>
         <head>
-            <title>Multi Stock Bot</title>
+            <title>#HLC3KAU Bot</title>
             <meta http-equiv="refresh" content="30">
             <style>
                 body{{font-family:Arial;padding:20px;background:#1a1a2e;color:#eee}}
@@ -109,12 +109,12 @@ class BotHandler(BaseHTTPRequestHandler):
             </style>
         </head>
         <body>
-            <h1>&#x1F916; Multi Stock Bot</h1>
+            <h1>&#x1F4CA; #HLC3KAU Bot</h1>
             <div class="card">
                 <p>&#x23F1; <b>Timeframe:</b> {INTERVAL}</p>
                 <p>&#x1F557; <b>Hours:</b> {TRADE_START} - {TRADE_END} IST</p>
                 <p>&#x1F4CA; <b>Stocks:</b> {len(STOCKS)}</p>
-                <p>&#x1F6E1; <b>SL Method:</b> ATR {ATR_MULTIPLIER}x (period {ATR_PERIOD})</p>
+                <p>&#x1F6E1; <b>SL:</b> ATR {ATR_MULTIPLIER}x + bsma Trail</p>
             </div>
             <div class="card">
                 <p>&#x1F504; <b>Last Check:</b> {bot_status['last_check']}</p>
@@ -291,24 +291,25 @@ def alert_signal(stock, price, signal_type, atr, hard_sl, trail_sl, t1, t2, tren
     sl_pts = round(abs(price - hard_sl), 2)
     t1_pts = round(abs(price - t1), 2)
     t2_pts = round(abs(price - t2), 2)
-    rr     = f"1 : {round(t1_pts/sl_pts, 1)} / 1 : {round(t2_pts/sl_pts, 1)}"
+    rr     = f"1:{round(t1_pts/sl_pts,1)} / 1:{round(t2_pts/sl_pts,1)}" if sl_pts > 0 else "N/A"
 
     bot_status['last_signal'] = f"{signal_type} {stock['name']} @ {price:.0f}"
     bot_status['total_signals'] += 1
 
     send_telegram(
+        f"📊 <b>#HLC3KAU Signal</b>\n"
+        f"━━━━━━━━━━━━━━━\n"
         f"{emoji} <b>{signal_type} — {stock['name']}</b>\n\n"
         f"{arrow} Entry     : <b>{price:.2f}</b>\n\n"
-        f"━━━━━━━━━━━━━━━\n"
         f"🛡 <b>Stop Loss:</b>\n"
         f"🔴 Hard SL  : <b>{hard_sl:.2f}</b>  ({sl_pts} pts)\n"
-        f"   Place this in broker NOW!\n"
+        f"   Place in broker NOW!\n"
         f"📉 Trail SL : <b>{trail_sl:.2f}</b>  (red line)\n"
-        f"   Watch on TradingView chart\n\n"
+        f"   Watch on TradingView\n\n"
         f"🎯 <b>Targets:</b>\n"
-        f"T1 : <b>{t1:.2f}</b>  (+{t1_pts} pts) — book 50%\n"
-        f"T2 : <b>{t2:.2f}</b>  (+{t2_pts} pts) — book rest\n\n"
-        f"📊 <b>Risk : Reward</b> = {rr}\n"
+        f"T1 : <b>{t1:.2f}</b>  ({t1_pts} pts) — book 50%\n"
+        f"T2 : <b>{t2:.2f}</b>  ({t2_pts} pts) — book rest\n\n"
+        f"📊 RR = {rr}\n"
         f"📐 ATR({ATR_PERIOD}) = {atr:.2f}\n\n"
         f"━━━━━━━━━━━━━━━\n"
         f"📊 <b>Market Analysis:</b>\n"
@@ -317,7 +318,6 @@ def alert_signal(stock, price, signal_type, atr, hard_sl, trail_sl, t1, t2, tren
         f"{div_emoji(ao_div)}\n\n"
         f"🎯 <b>Confidence: {conf}</b>\n"
         f"━━━━━━━━━━━━━━━\n\n"
-        f"✅ HLC3/KAU Crossover\n"
         f"👁 Monitoring live...\n"
         f"📊 <a href='{chart}'>Open TradingView Chart</a>\n\n"
         f"⏰ {get_ist_time()}\n"
@@ -349,13 +349,14 @@ def alert_signal(stock, price, signal_type, atr, hard_sl, trail_sl, t1, t2, tren
 def alert_startup():
     names = "\n".join([f"• {s['name']}" for s in STOCKS])
     send_telegram(
-        f"🚀 <b>Multi Stock Bot Started!</b>\n\n"
-        f"📊 Scanning {len(STOCKS)} stocks\n"
+        f"📊 <b>#HLC3KAU Bot Started!</b>\n"
+        f"━━━━━━━━━━━━━━━\n"
+        f"📈 Scanning {len(STOCKS)} stocks\n"
         f"🕐 {TRADE_START} – {TRADE_END} IST\n\n"
         f"✅ Features:\n"
         f"• HLC3/KAU Crossover\n"
-        f"• ATR {ATR_MULTIPLIER}x Hard SL (broker)\n"
-        f"• bsma Trail SL (chart)\n"
+        f"• ATR {ATR_MULTIPLIER}x Hard SL\n"
+        f"• bsma Trail SL\n"
         f"• Market Structure HH/HL/LH/LL\n"
         f"• AO + Divergence\n"
         f"• Confidence Score\n"
@@ -453,7 +454,6 @@ def ema(series, n):
     return series.ewm(span=n, adjust=False).mean()
 
 def calculate_atr(df, period=14):
-    """ATR = Average True Range over period bars"""
     high  = df['High']
     low   = df['Low']
     close = df['Close']
@@ -462,7 +462,7 @@ def calculate_atr(df, period=14):
         (high - close.shift()).abs(),
         (low  - close.shift()).abs()
     ], axis=1).max(axis=1)
-    return tr.rolling(period).mean().iloc[-1]
+    return float(tr.rolling(period).mean().iloc[-1])
 
 def awesome_oscillator(df):
     mid = (df['High'] + df['Low']) / 2
@@ -561,31 +561,25 @@ def monitor_trades():
         try:
             with active_trades_lock:
                 symbols = list(active_trades.keys())
-
             market_closed = not is_trading_time()
-
             for symbol in symbols:
                 with active_trades_lock:
                     if symbol not in active_trades:
                         continue
                     trade = active_trades[symbol].copy()
-
                 price = get_current_price(symbol)
                 if price is None:
                     continue
-
-                name     = trade['name']
-                signal   = trade['signal']
-                entry    = trade['entry']
-                hard_sl  = trade['hard_sl']
-                t1       = trade['t1']
-                t2       = trade['t2']
-                t1_hit   = trade['t1_hit']
-                row      = trade['row']
-
+                name    = trade['name']
+                signal  = trade['signal']
+                entry   = trade['entry']
+                hard_sl = trade['hard_sl']
+                t1      = trade['t1']
+                t2      = trade['t2']
+                t1_hit  = trade['t1_hit']
+                row     = trade['row']
                 result     = None
                 exit_price = price
-
                 if signal == "BUY":
                     pnl = price - entry
                     if price >= t2:
@@ -593,12 +587,14 @@ def monitor_trades():
                         bot_status['wins'] += 1
                     elif price >= t1 and not t1_hit:
                         send_telegram(
+                            f"📊 <b>#HLC3KAU T1 Hit</b>\n"
+                            f"━━━━━━━━━━━━━━━\n"
                             f"🎯 <b>T1 HIT — {name}</b>\n\n"
                             f"Signal : BUY\n"
                             f"Entry  : {entry:.2f}\n"
                             f"T1 Hit : {price:.2f}\n"
                             f"P&L    : +{pnl:.2f} pts\n\n"
-                            f"Book 50% now!\n"
+                            f"✅ Book 50% now!\n"
                             f"Move Hard SL to breakeven\n"
                             f"Watch Trail SL for rest\n\n"
                             f"⏰ {get_ist_time()}"
@@ -614,20 +610,21 @@ def monitor_trades():
                     elif market_closed:
                         result = "🔔 CLOSED EOD"
                         pnl    = price - entry
-
-                else:  # SELL
+                else:
                     pnl = entry - price
                     if price <= t2:
                         result = "✅ WIN T2"
                         bot_status['wins'] += 1
                     elif price <= t1 and not t1_hit:
                         send_telegram(
+                            f"📊 <b>#HLC3KAU T1 Hit</b>\n"
+                            f"━━━━━━━━━━━━━━━\n"
                             f"🎯 <b>T1 HIT — {name}</b>\n\n"
                             f"Signal : SELL\n"
                             f"Entry  : {entry:.2f}\n"
                             f"T1 Hit : {price:.2f}\n"
                             f"P&L    : +{pnl:.2f} pts\n\n"
-                            f"Book 50% now!\n"
+                            f"✅ Book 50% now!\n"
                             f"Move Hard SL to breakeven\n"
                             f"Watch Trail SL for rest\n\n"
                             f"⏰ {get_ist_time()}"
@@ -643,10 +640,11 @@ def monitor_trades():
                     elif market_closed:
                         result = "🔔 CLOSED EOD"
                         pnl    = entry - price
-
                 if result:
                     emoji = "✅" if "WIN" in result else "❌" if "LOSS" in result else "🔔"
                     send_telegram(
+                        f"📊 <b>#HLC3KAU Outcome</b>\n"
+                        f"━━━━━━━━━━━━━━━\n"
                         f"{emoji} <b>OUTCOME — {name}</b>\n\n"
                         f"Signal : {signal}\n"
                         f"Entry  : {entry:.2f}\n"
@@ -660,12 +658,9 @@ def monitor_trades():
                         active_trades.pop(symbol, None)
                         bot_status['active_trades'] = len(active_trades)
                     print(f"✅ Closed: {name} {result} P&L:{pnl:.2f}")
-
                 time.sleep(3)
-
         except Exception as e:
             print(f"❌ Monitor error: {e}")
-
         time.sleep(60)
 
 
@@ -681,33 +676,25 @@ def scan_stock(stock):
         with active_trades_lock:
             if symbol in active_trades:
                 return
-
         df  = fetch_data(symbol)
         d4h = fetch_htf(symbol)
         if df is None or d4h is None:
             return
         if len(df) < 40:
             return
-
         df   = build(df, d4h)
         last = df.iloc[-2]
         ct   = str(df.index[-2])
-
         print(f"  {name}: {last['Close']:.2f} BUY:{last['buy']} SELL:{last['sell']}")
-
         if last_alerts.get(symbol) == ct:
             return
         if not last['buy'] and not last['sell']:
             return
-
         signal_type = "BUY" if last['buy'] else "SELL"
         price       = float(last['Close'])
         bsma_val    = float(last['bsma'])
-
-        # Calculate ATR based Hard SL
-        atr      = calculate_atr(df, ATR_PERIOD)
-        sl_dist  = ATR_MULTIPLIER * atr
-
+        atr         = calculate_atr(df, ATR_PERIOD)
+        sl_dist     = ATR_MULTIPLIER * atr
         if signal_type == "BUY":
             hard_sl  = round(price - sl_dist, 2)
             trail_sl = round(bsma_val, 2)
@@ -718,15 +705,11 @@ def scan_stock(stock):
             trail_sl = round(bsma_val, 2)
             t1       = round(price - sl_dist * TARGET1_RATIO, 2)
             t2       = round(price - sl_dist * TARGET2_RATIO, 2)
-
         trend             = detect_market_structure(df)
         ao_signal, ao_div = analyze_ao(df)
-
-        print(f"  ✅ {signal_type} {name} ATR:{atr:.2f} SL:{hard_sl} Trail:{trail_sl}")
-
+        print(f"  ✅ {signal_type} {name} ATR:{atr:.2f} SL:{hard_sl} T1:{t1} T2:{t2}")
         alert_signal(stock, price, signal_type, atr, hard_sl, trail_sl, t1, t2, trend, ao_signal, ao_div)
         last_alerts[symbol] = ct
-
     except Exception as e:
         print(f"❌ {name}: {e}")
 
@@ -737,11 +720,9 @@ def scan_stock(stock):
 def run_strategy():
     print(f"\n{'='*40}\n🔄 {get_ist_time()}")
     bot_status['last_check'] = get_ist_time()
-
     if not is_trading_time():
         print("⏸  Outside trading hours.")
         return
-
     print(f"Scanning {len(STOCKS)} stocks...")
     for stock in STOCKS:
         scan_stock(stock)
@@ -769,10 +750,8 @@ else:
     monitor_thread = threading.Thread(target=monitor_trades)
     monitor_thread.daemon = True
     monitor_thread.start()
-
     bot_thread = threading.Thread(target=bot_loop)
     bot_thread.daemon = True
     bot_thread.start()
-
     init_gsheet()
     run_web_server()

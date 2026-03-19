@@ -24,29 +24,29 @@ GOOGLE_CREDS_JSON  = os.environ.get("GOOGLE_CREDS_JSON", "")
 #  📋 STOCKS TO SCAN
 # ──────────────────────────────────────────
 STOCKS = [
-    {"symbol": "^NSEI",         "name": "NIFTY 50",       "tv": "NSE:NIFTY",      "sl": 20},
-    {"symbol": "^NSEBANK",      "name": "BANK NIFTY",     "tv": "NSE:BANKNIFTY",  "sl": 50},
-    {"symbol": "SBIN.NS",       "name": "SBIN",           "tv": "NSE:SBIN",       "sl": 2},
-    {"symbol": "IDEA.NS",       "name": "IDEA",           "tv": "NSE:IDEA",       "sl": 1},
-    {"symbol": "YESBANK.NS",    "name": "YES BANK",       "tv": "NSE:YESBANK",    "sl": 1},
-    {"symbol": "SAIL.NS",       "name": "SAIL",           "tv": "NSE:SAIL",       "sl": 2},
-    {"symbol": "NHPC.NS",       "name": "NHPC",           "tv": "NSE:NHPC",       "sl": 2},
-    {"symbol": "IRFC.NS",       "name": "IRFC",           "tv": "NSE:IRFC",       "sl": 2},
-    {"symbol": "PNB.NS",        "name": "PNB",            "tv": "NSE:PNB",        "sl": 2},
-    {"symbol": "BANKBARODA.NS", "name": "BANK OF BARODA", "tv": "NSE:BANKBARODA", "sl": 2},
-    {"symbol": "SUZLON.NS",     "name": "SUZLON",         "tv": "NSE:SUZLON",     "sl": 1},
-    {"symbol": "HFCL.NS",       "name": "HFCL",           "tv": "NSE:HFCL",       "sl": 2},
-    {"symbol": "TRIDENT.NS",    "name": "TRIDENT",        "tv": "NSE:TRIDENT",    "sl": 1},
-    {"symbol": "JPPOWER.NS",    "name": "JP POWER",       "tv": "NSE:JPPOWER",    "sl": 1},
-    {"symbol": "DISHTV.NS",     "name": "DISH TV",        "tv": "NSE:DISHTV",     "sl": 1},
-    {"symbol": "ITI.NS",        "name": "ITI",            "tv": "NSE:ITI",        "sl": 1},
-    {"symbol": "RVNL.NS",       "name": "RVNL",           "tv": "NSE:RVNL",       "sl": 2},
-    {"symbol": "NALCO.NS",      "name": "NALCO",          "tv": "NSE:NALCO",      "sl": 2},
-    {"symbol": "NMDC.NS",       "name": "NMDC",           "tv": "NSE:NMDC",       "sl": 2},
-    {"symbol": "HINDCOPPER.NS", "name": "HIND COPPER",    "tv": "NSE:HINDCOPPER", "sl": 2},
-    {"symbol": "CENTRALBK.NS",  "name": "CENTRAL BANK",   "tv": "NSE:CENTRALBK",  "sl": 1},
-    {"symbol": "BEML.NS",       "name": "BEML",           "tv": "NSE:BEML",       "sl": 2},
-    {"symbol": "ABCAPITAL.NS",  "name": "AB CAPITAL",     "tv": "NSE:ABCAPITAL",  "sl": 2},
+    {"symbol": "^NSEI",         "name": "NIFTY 50",       "tv": "NSE:NIFTY"},
+    {"symbol": "^NSEBANK",      "name": "BANK NIFTY",     "tv": "NSE:BANKNIFTY"},
+    {"symbol": "SBIN.NS",       "name": "SBIN",           "tv": "NSE:SBIN"},
+    {"symbol": "IDEA.NS",       "name": "IDEA",           "tv": "NSE:IDEA"},
+    {"symbol": "YESBANK.NS",    "name": "YES BANK",       "tv": "NSE:YESBANK"},
+    {"symbol": "SAIL.NS",       "name": "SAIL",           "tv": "NSE:SAIL"},
+    {"symbol": "NHPC.NS",       "name": "NHPC",           "tv": "NSE:NHPC"},
+    {"symbol": "IRFC.NS",       "name": "IRFC",           "tv": "NSE:IRFC"},
+    {"symbol": "PNB.NS",        "name": "PNB",            "tv": "NSE:PNB"},
+    {"symbol": "BANKBARODA.NS", "name": "BANK OF BARODA", "tv": "NSE:BANKBARODA"},
+    {"symbol": "SUZLON.NS",     "name": "SUZLON",         "tv": "NSE:SUZLON"},
+    {"symbol": "HFCL.NS",       "name": "HFCL",           "tv": "NSE:HFCL"},
+    {"symbol": "TRIDENT.NS",    "name": "TRIDENT",        "tv": "NSE:TRIDENT"},
+    {"symbol": "JPPOWER.NS",    "name": "JP POWER",       "tv": "NSE:JPPOWER"},
+    {"symbol": "DISHTV.NS",     "name": "DISH TV",        "tv": "NSE:DISHTV"},
+    {"symbol": "ITI.NS",        "name": "ITI",            "tv": "NSE:ITI"},
+    {"symbol": "RVNL.NS",       "name": "RVNL",           "tv": "NSE:RVNL"},
+    {"symbol": "NALCO.NS",      "name": "NALCO",          "tv": "NSE:NALCO"},
+    {"symbol": "NMDC.NS",       "name": "NMDC",           "tv": "NSE:NMDC"},
+    {"symbol": "HINDCOPPER.NS", "name": "HIND COPPER",    "tv": "NSE:HINDCOPPER"},
+    {"symbol": "CENTRALBK.NS",  "name": "CENTRAL BANK",   "tv": "NSE:CENTRALBK"},
+    {"symbol": "BEML.NS",       "name": "BEML",           "tv": "NSE:BEML"},
+    {"symbol": "ABCAPITAL.NS",  "name": "AB CAPITAL",     "tv": "NSE:ABCAPITAL"},
 ]
 
 INTERVAL        = "5m"
@@ -58,6 +58,8 @@ KAMA_FASTEND    = 2.5
 KAMA_SLOWEND    = 20
 TARGET1_RATIO   = 1.5
 TARGET2_RATIO   = 2.0
+ATR_PERIOD      = 14
+ATR_MULTIPLIER  = 1.5   # Industry standard intraday
 TRADE_START     = "9:15"
 TRADE_END       = "15:30"
 SWING_LOOKBACK  = 5
@@ -66,15 +68,12 @@ bot_status = {
     "last_check"    : "Not started",
     "last_signal"   : "None",
     "total_signals" : 0,
-    "stocks_scanned": 0,
     "wins"          : 0,
     "losses"        : 0,
     "active_trades" : 0,
 }
 
-# Active trades being monitored
-# {symbol: {name, signal, entry, sl, t1, t2, t1_hit, row}}
-active_trades = {}
+active_trades      = {}
 active_trades_lock = threading.Lock()
 
 
@@ -87,15 +86,13 @@ class BotHandler(BaseHTTPRequestHandler):
         self.send_header('Content-type', 'text/html')
         self.end_headers()
         stock_list = "".join([f"<li>{s['name']}</li>" for s in STOCKS])
-        total = bot_status['wins'] + bot_status['losses']
+        total    = bot_status['wins'] + bot_status['losses']
         win_rate = round(bot_status['wins'] / total * 100, 1) if total > 0 else 0
-
         with active_trades_lock:
             active_list = "".join([
                 f"<li>{t['name']} {t['signal']} @ {t['entry']:.2f}</li>"
                 for t in active_trades.values()
             ]) or "<li>None</li>"
-
         html = f"""
         <html>
         <head>
@@ -117,6 +114,7 @@ class BotHandler(BaseHTTPRequestHandler):
                 <p>&#x23F1; <b>Timeframe:</b> {INTERVAL}</p>
                 <p>&#x1F557; <b>Hours:</b> {TRADE_START} - {TRADE_END} IST</p>
                 <p>&#x1F4CA; <b>Stocks:</b> {len(STOCKS)}</p>
+                <p>&#x1F6E1; <b>SL Method:</b> ATR {ATR_MULTIPLIER}x (period {ATR_PERIOD})</p>
             </div>
             <div class="card">
                 <p>&#x1F504; <b>Last Check:</b> {bot_status['last_check']}</p>
@@ -163,19 +161,20 @@ def init_gsheet():
         import gspread
         from google.oauth2.service_account import Credentials
         creds_dict = json.loads(GOOGLE_CREDS_JSON)
-        scopes = [
+        scopes     = [
             "https://www.googleapis.com/auth/spreadsheets",
             "https://www.googleapis.com/auth/drive"
         ]
-        creds = Credentials.from_service_account_info(creds_dict, scopes=scopes)
+        creds         = Credentials.from_service_account_info(creds_dict, scopes=scopes)
         gsheet_client = gspread.authorize(creds)
         sh = gsheet_client.open_by_key(GOOGLE_SHEET_ID)
         ws = sh.sheet1
         if ws.cell(1,1).value != "Date":
-            ws.update('A1:P1', [[
+            ws.update('A1:R1', [[
                 "Date","Time","Stock","Signal","Entry",
-                "SL","T1","T2","Trend","AO Signal","AO Divergence",
-                "Confidence","Exit Price","Exit Time","P&L","Result"
+                "ATR","Hard SL","Trail SL","T1","T2",
+                "RR","Trend","AO Signal","AO Div",
+                "Confidence","Exit Price","P&L","Result"
             ]])
         print("✅ Google Sheets connected!")
         return True
@@ -183,7 +182,7 @@ def init_gsheet():
         print(f"❌ Sheets: {e}")
         return False
 
-def log_to_gsheet(name, signal, price, sl, t1, t2, trend, ao_signal, ao_div, confidence):
+def log_to_gsheet(name, signal, price, atr, hard_sl, trail_sl, t1, t2, rr, trend, ao_signal, ao_div, confidence):
     if not gsheet_client:
         return None
     try:
@@ -195,10 +194,15 @@ def log_to_gsheet(name, signal, price, sl, t1, t2, trend, ao_signal, ao_div, con
             now.strftime("%d-%b-%Y"),
             now.strftime("%I:%M %p"),
             name, signal,
-            round(price,2), round(sl,2),
-            round(t1,2), round(t2,2),
+            round(price,2),
+            round(atr,2),
+            round(hard_sl,2),
+            round(trail_sl,2),
+            round(t1,2),
+            round(t2,2),
+            rr,
             trend, ao_signal, ao_div, confidence,
-            "", "", "", "MONITORING"
+            "", "", "MONITORING"
         ])
         all_rows = ws.get_all_values()
         row_num  = len(all_rows)
@@ -208,16 +212,15 @@ def log_to_gsheet(name, signal, price, sl, t1, t2, trend, ao_signal, ao_div, con
         print(f"❌ Sheets log: {e}")
         return None
 
-def update_outcome(row_num, exit_price, exit_time, pnl, result):
+def update_outcome(row_num, exit_price, pnl, result):
     if not gsheet_client or not row_num:
         return
     try:
         sh = gsheet_client.open_by_key(GOOGLE_SHEET_ID)
         ws = sh.sheet1
-        ws.update_cell(row_num, 13, round(exit_price, 2))
-        ws.update_cell(row_num, 14, exit_time)
-        ws.update_cell(row_num, 15, round(pnl, 2))
-        ws.update_cell(row_num, 16, result)
+        ws.update_cell(row_num, 16, round(exit_price, 2))
+        ws.update_cell(row_num, 17, round(pnl, 2))
+        ws.update_cell(row_num, 18, result)
         print(f"✅ Updated outcome row {row_num}: {result}")
     except Exception as e:
         print(f"❌ Outcome update: {e}")
@@ -229,10 +232,10 @@ def update_outcome(row_num, exit_price, exit_time, pnl, result):
 def send_telegram(msg):
     try:
         url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
-        r = requests.post(url, data={
-            "chat_id": TELEGRAM_CHAT_ID,
-            "text": msg,
-            "parse_mode": "HTML",
+        r   = requests.post(url, data={
+            "chat_id"                 : TELEGRAM_CHAT_ID,
+            "text"                    : msg,
+            "parse_mode"              : "HTML",
             "disable_web_page_preview": False
         }, timeout=10)
         print("✅ TG sent!" if r.status_code == 200 else f"❌ {r.text}")
@@ -280,24 +283,33 @@ def trade_confidence(signal_type, trend, ao_signal, ao_div):
     if score >= 2: return "👍 MODERATE"
     return "⚠️ WEAK — SKIP"
 
-def alert_signal(stock, price, signal_type, trend, ao_signal, ao_div):
-    sl    = price - stock['sl'] if signal_type == "BUY" else price + stock['sl']
-    t1    = price + (stock['sl'] * TARGET1_RATIO) if signal_type == "BUY" else price - (stock['sl'] * TARGET1_RATIO)
-    t2    = price + (stock['sl'] * TARGET2_RATIO) if signal_type == "BUY" else price - (stock['sl'] * TARGET2_RATIO)
-    chart = get_chart_link(stock['tv'])
-    emoji = "🟢" if signal_type == "BUY" else "🔴"
-    arrow = "📈" if signal_type == "BUY" else "📉"
-    conf  = trade_confidence(signal_type, trend, ao_signal, ao_div)
+def alert_signal(stock, price, signal_type, atr, hard_sl, trail_sl, t1, t2, trend, ao_signal, ao_div):
+    chart  = get_chart_link(stock['tv'])
+    emoji  = "🟢" if signal_type == "BUY" else "🔴"
+    arrow  = "📈" if signal_type == "BUY" else "📉"
+    conf   = trade_confidence(signal_type, trend, ao_signal, ao_div)
+    sl_pts = round(abs(price - hard_sl), 2)
+    t1_pts = round(abs(price - t1), 2)
+    t2_pts = round(abs(price - t2), 2)
+    rr     = f"1 : {round(t1_pts/sl_pts, 1)} / 1 : {round(t2_pts/sl_pts, 1)}"
 
     bot_status['last_signal'] = f"{signal_type} {stock['name']} @ {price:.0f}"
     bot_status['total_signals'] += 1
 
     send_telegram(
         f"{emoji} <b>{signal_type} — {stock['name']}</b>\n\n"
-        f"{arrow} Entry  : <b>{price:.2f}</b>\n"
-        f"🛑 SL     : <b>{sl:.2f}</b>\n"
-        f"🎯 Target1: <b>{t1:.2f}</b>\n"
-        f"🎯 Target2: <b>{t2:.2f}</b>\n\n"
+        f"{arrow} Entry     : <b>{price:.2f}</b>\n\n"
+        f"━━━━━━━━━━━━━━━\n"
+        f"🛡 <b>Stop Loss:</b>\n"
+        f"🔴 Hard SL  : <b>{hard_sl:.2f}</b>  ({sl_pts} pts)\n"
+        f"   Place this in broker NOW!\n"
+        f"📉 Trail SL : <b>{trail_sl:.2f}</b>  (red line)\n"
+        f"   Watch on TradingView chart\n\n"
+        f"🎯 <b>Targets:</b>\n"
+        f"T1 : <b>{t1:.2f}</b>  (+{t1_pts} pts) — book 50%\n"
+        f"T2 : <b>{t2:.2f}</b>  (+{t2_pts} pts) — book rest\n\n"
+        f"📊 <b>Risk : Reward</b> = {rr}\n"
+        f"📐 ATR({ATR_PERIOD}) = {atr:.2f}\n\n"
         f"━━━━━━━━━━━━━━━\n"
         f"📊 <b>Market Analysis:</b>\n"
         f"{trend_emoji(trend)}\n"
@@ -306,32 +318,33 @@ def alert_signal(stock, price, signal_type, trend, ao_signal, ao_div):
         f"🎯 <b>Confidence: {conf}</b>\n"
         f"━━━━━━━━━━━━━━━\n\n"
         f"✅ HLC3/KAU Crossover\n"
-        f"👁 <b>Monitoring trade live...</b>\n"
+        f"👁 Monitoring live...\n"
         f"📊 <a href='{chart}'>Open TradingView Chart</a>\n\n"
         f"⏰ {get_ist_time()}\n"
         f"⚠️ Paper trade first!"
     )
 
     row_num = log_to_gsheet(
-        stock['name'], signal_type, price, sl, t1, t2,
+        stock['name'], signal_type, price, atr,
+        hard_sl, trail_sl, t1, t2, rr,
         trend, ao_signal, ao_div, conf
     )
 
-    # Add to active trades for live monitoring
     with active_trades_lock:
         active_trades[stock['symbol']] = {
-            "name"    : stock['name'],
-            "signal"  : signal_type,
-            "entry"   : price,
-            "sl"      : sl,
-            "t1"      : t1,
-            "t2"      : t2,
-            "t1_hit"  : False,
-            "row"     : row_num,
-            "symbol"  : stock['symbol'],
+            "name"     : stock['name'],
+            "signal"   : signal_type,
+            "entry"    : price,
+            "hard_sl"  : hard_sl,
+            "trail_sl" : trail_sl,
+            "t1"       : t1,
+            "t2"       : t2,
+            "t1_hit"   : False,
+            "row"      : row_num,
+            "symbol"   : stock['symbol'],
         }
         bot_status['active_trades'] = len(active_trades)
-    print(f"👁 Now monitoring {stock['name']} live!")
+    print(f"👁 Monitoring {stock['name']} live!")
 
 def alert_startup():
     names = "\n".join([f"• {s['name']}" for s in STOCKS])
@@ -341,11 +354,12 @@ def alert_startup():
         f"🕐 {TRADE_START} – {TRADE_END} IST\n\n"
         f"✅ Features:\n"
         f"• HLC3/KAU Crossover\n"
-        f"• Market Structure (HH/HL/LH/LL)\n"
-        f"• Awesome Oscillator + Divergence\n"
+        f"• ATR {ATR_MULTIPLIER}x Hard SL (broker)\n"
+        f"• bsma Trail SL (chart)\n"
+        f"• Market Structure HH/HL/LH/LL\n"
+        f"• AO + Divergence\n"
         f"• Confidence Score\n"
-        f"• Live Trade Monitoring\n"
-        f"• Auto Outcome to Google Sheets\n\n"
+        f"• Live Trade Monitoring\n\n"
         f"📋 Stocks:\n{names}\n\n"
         f"⏰ {get_ist_time()}"
     )
@@ -361,8 +375,8 @@ def is_trading_time():
         return False
     sh, sm = map(int, TRADE_START.split(":"))
     eh, em = map(int, TRADE_END.split(":"))
-    start = now.replace(hour=sh, minute=sm, second=0, microsecond=0)
-    end   = now.replace(hour=eh, minute=em, second=0, microsecond=0)
+    start  = now.replace(hour=sh, minute=sm, second=0, microsecond=0)
+    end    = now.replace(hour=eh, minute=em, second=0, microsecond=0)
     return start <= now <= end
 
 
@@ -370,43 +384,50 @@ def is_trading_time():
 #  📦 DATA FETCH
 # ──────────────────────────────────────────
 def fetch_data(symbol):
-    try:
-        df = yf.download(symbol, interval=INTERVAL, period="5d", progress=False)
-        if df.empty:
-            return None
-        df.columns = [c[0] if isinstance(c, tuple) else c for c in df.columns]
-        df = df[['Open','High','Low','Close','Volume']].dropna()
-        return df
-    except Exception as e:
-        print(f"❌ {symbol}: {e}")
-        return None
+    for attempt in range(3):
+        try:
+            df = yf.download(symbol, interval=INTERVAL, period="5d", progress=False)
+            if df.empty:
+                return None
+            df.columns = [c[0] if isinstance(c, tuple) else c for c in df.columns]
+            df = df[['Open','High','Low','Close','Volume']].dropna()
+            return df
+        except Exception as e:
+            print(f"⚠️ {symbol} attempt {attempt+1}: {e}")
+            time.sleep(5)
+    return None
 
 def fetch_htf(symbol):
-    try:
-        df = yf.download(symbol, interval="1h", period="60d", progress=False)
-        if df.empty:
-            return None
-        df.columns = [c[0] if isinstance(c, tuple) else c for c in df.columns]
-        df = df[['Open','High','Low','Close','Volume']].dropna()
-        df4h = df.resample('4h').agg({
-            'Open':'first','High':'max',
-            'Low':'min','Close':'last','Volume':'sum'
-        }).dropna()
-        df4h['hlc3'] = (df4h['High'] + df4h['Low'] + df4h['Close']) / 3
-        return df4h
-    except Exception as e:
-        print(f"❌ HTF {symbol}: {e}")
-        return None
+    for attempt in range(3):
+        try:
+            df = yf.download(symbol, interval="1h", period="60d", progress=False)
+            if df.empty:
+                return None
+            df.columns = [c[0] if isinstance(c, tuple) else c for c in df.columns]
+            df = df[['Open','High','Low','Close','Volume']].dropna()
+            df4h = df.resample('4h').agg({
+                'Open':'first','High':'max',
+                'Low':'min','Close':'last','Volume':'sum'
+            }).dropna()
+            df4h['hlc3'] = (df4h['High'] + df4h['Low'] + df4h['Close']) / 3
+            return df4h
+        except Exception as e:
+            print(f"⚠️ HTF {symbol} attempt {attempt+1}: {e}")
+            time.sleep(5)
+    return None
 
 def get_current_price(symbol):
-    try:
-        df = yf.download(symbol, interval="1m", period="1d", progress=False)
-        if df.empty:
-            return None
-        df.columns = [c[0] if isinstance(c, tuple) else c for c in df.columns]
-        return float(df['Close'].iloc[-1])
-    except:
-        return None
+    for attempt in range(3):
+        try:
+            ticker = yf.Ticker(symbol)
+            data   = ticker.history(period="1d", interval="1m")
+            if data.empty:
+                return None
+            return float(data['Close'].iloc[-1])
+        except Exception as e:
+            print(f"⚠️ Price {symbol} attempt {attempt+1}: {e}")
+            time.sleep(5)
+    return None
 
 
 # ──────────────────────────────────────────
@@ -431,6 +452,18 @@ def kama(series, length=5, fastend=2.5, slowend=20):
 def ema(series, n):
     return series.ewm(span=n, adjust=False).mean()
 
+def calculate_atr(df, period=14):
+    """ATR = Average True Range over period bars"""
+    high  = df['High']
+    low   = df['Low']
+    close = df['Close']
+    tr    = pd.concat([
+        high - low,
+        (high - close.shift()).abs(),
+        (low  - close.shift()).abs()
+    ], axis=1).max(axis=1)
+    return tr.rolling(period).mean().iloc[-1]
+
 def awesome_oscillator(df):
     mid = (df['High'] + df['Low']) / 2
     return mid.rolling(5).mean() - mid.rolling(34).mean()
@@ -440,10 +473,10 @@ def awesome_oscillator(df):
 #  📊 MARKET STRUCTURE
 # ──────────────────────────────────────────
 def detect_market_structure(df):
-    highs = df['High'].values
-    lows  = df['Low'].values
-    n     = len(highs)
-    lb    = SWING_LOOKBACK
+    highs       = df['High'].values
+    lows        = df['Low'].values
+    n           = len(highs)
+    lb          = SWING_LOOKBACK
     swing_highs = []
     swing_lows  = []
     for i in range(lb, n - lb):
@@ -524,7 +557,6 @@ def build(df, df4h):
 #  👁 LIVE TRADE MONITOR
 # ──────────────────────────────────────────
 def monitor_trades():
-    """Runs in background — checks active trades every minute."""
     while True:
         try:
             with active_trades_lock:
@@ -542,17 +574,16 @@ def monitor_trades():
                 if price is None:
                     continue
 
-                name    = trade['name']
-                signal  = trade['signal']
-                entry   = trade['entry']
-                sl      = trade['sl']
-                t1      = trade['t1']
-                t2      = trade['t2']
-                t1_hit  = trade['t1_hit']
-                row     = trade['row']
-                exit_time = get_ist_time_short()
+                name     = trade['name']
+                signal   = trade['signal']
+                entry    = trade['entry']
+                hard_sl  = trade['hard_sl']
+                t1       = trade['t1']
+                t2       = trade['t2']
+                t1_hit   = trade['t1_hit']
+                row      = trade['row']
 
-                result = None
+                result     = None
                 exit_price = price
 
                 if signal == "BUY":
@@ -561,21 +592,22 @@ def monitor_trades():
                         result = "✅ WIN T2"
                         bot_status['wins'] += 1
                     elif price >= t1 and not t1_hit:
-                        # T1 hit — alert but keep monitoring for T2
                         send_telegram(
-                            f"🎯 <b>TARGET 1 HIT — {name}</b>\n\n"
+                            f"🎯 <b>T1 HIT — {name}</b>\n\n"
                             f"Signal : BUY\n"
                             f"Entry  : {entry:.2f}\n"
                             f"T1 Hit : {price:.2f}\n"
                             f"P&L    : +{pnl:.2f} pts\n\n"
-                            f"👁 Still watching for T2...\n"
+                            f"Book 50% now!\n"
+                            f"Move Hard SL to breakeven\n"
+                            f"Watch Trail SL for rest\n\n"
                             f"⏰ {get_ist_time()}"
                         )
                         with active_trades_lock:
                             if symbol in active_trades:
                                 active_trades[symbol]['t1_hit'] = True
                         continue
-                    elif price <= sl:
+                    elif price <= hard_sl:
                         result = "❌ LOSS SL"
                         pnl    = price - entry
                         bot_status['losses'] += 1
@@ -590,19 +622,21 @@ def monitor_trades():
                         bot_status['wins'] += 1
                     elif price <= t1 and not t1_hit:
                         send_telegram(
-                            f"🎯 <b>TARGET 1 HIT — {name}</b>\n\n"
+                            f"🎯 <b>T1 HIT — {name}</b>\n\n"
                             f"Signal : SELL\n"
                             f"Entry  : {entry:.2f}\n"
                             f"T1 Hit : {price:.2f}\n"
                             f"P&L    : +{pnl:.2f} pts\n\n"
-                            f"👁 Still watching for T2...\n"
+                            f"Book 50% now!\n"
+                            f"Move Hard SL to breakeven\n"
+                            f"Watch Trail SL for rest\n\n"
                             f"⏰ {get_ist_time()}"
                         )
                         with active_trades_lock:
                             if symbol in active_trades:
                                 active_trades[symbol]['t1_hit'] = True
                         continue
-                    elif price >= sl:
+                    elif price >= hard_sl:
                         result = "❌ LOSS SL"
                         pnl    = entry - price
                         bot_status['losses'] += 1
@@ -611,7 +645,6 @@ def monitor_trades():
                         pnl    = entry - price
 
                 if result:
-                    # Send final outcome alert
                     emoji = "✅" if "WIN" in result else "❌" if "LOSS" in result else "🔔"
                     send_telegram(
                         f"{emoji} <b>OUTCOME — {name}</b>\n\n"
@@ -622,15 +655,13 @@ def monitor_trades():
                         f"Result : <b>{result}</b>\n\n"
                         f"⏰ {get_ist_time()}"
                     )
-                    # Update Google Sheet
-                    update_outcome(row, exit_price, exit_time, pnl, result)
-
-                    # Remove from active trades
+                    update_outcome(row, exit_price, pnl, result)
                     with active_trades_lock:
                         active_trades.pop(symbol, None)
                         bot_status['active_trades'] = len(active_trades)
+                    print(f"✅ Closed: {name} {result} P&L:{pnl:.2f}")
 
-                    print(f"✅ Trade closed: {name} {result} P&L:{pnl:.2f}")
+                time.sleep(3)
 
         except Exception as e:
             print(f"❌ Monitor error: {e}")
@@ -647,7 +678,6 @@ def scan_stock(stock):
     symbol = stock['symbol']
     name   = stock['name']
     try:
-        # Skip if already in active trade
         with active_trades_lock:
             if symbol in active_trades:
                 return
@@ -670,13 +700,31 @@ def scan_stock(stock):
         if not last['buy'] and not last['sell']:
             return
 
-        signal_type      = "BUY" if last['buy'] else "SELL"
-        trend            = detect_market_structure(df)
+        signal_type = "BUY" if last['buy'] else "SELL"
+        price       = float(last['Close'])
+        bsma_val    = float(last['bsma'])
+
+        # Calculate ATR based Hard SL
+        atr      = calculate_atr(df, ATR_PERIOD)
+        sl_dist  = ATR_MULTIPLIER * atr
+
+        if signal_type == "BUY":
+            hard_sl  = round(price - sl_dist, 2)
+            trail_sl = round(bsma_val, 2)
+            t1       = round(price + sl_dist * TARGET1_RATIO, 2)
+            t2       = round(price + sl_dist * TARGET2_RATIO, 2)
+        else:
+            hard_sl  = round(price + sl_dist, 2)
+            trail_sl = round(bsma_val, 2)
+            t1       = round(price - sl_dist * TARGET1_RATIO, 2)
+            t2       = round(price - sl_dist * TARGET2_RATIO, 2)
+
+        trend             = detect_market_structure(df)
         ao_signal, ao_div = analyze_ao(df)
 
-        print(f"  ✅ {signal_type} {name} | {trend} | {ao_signal} | {ao_div}")
+        print(f"  ✅ {signal_type} {name} ATR:{atr:.2f} SL:{hard_sl} Trail:{trail_sl}")
 
-        alert_signal(stock, last['Close'], signal_type, trend, ao_signal, ao_div)
+        alert_signal(stock, price, signal_type, atr, hard_sl, trail_sl, t1, t2, trend, ao_signal, ao_div)
         last_alerts[symbol] = ct
 
     except Exception as e:
@@ -697,7 +745,7 @@ def run_strategy():
     print(f"Scanning {len(STOCKS)} stocks...")
     for stock in STOCKS:
         scan_stock(stock)
-        time.sleep(2)
+        time.sleep(4)
 
 def bot_loop():
     print("🚀 Bot loop starting...")
@@ -718,16 +766,13 @@ if not TELEGRAM_BOT_TOKEN:
 elif not TELEGRAM_CHAT_ID:
     print("❌ TELEGRAM_CHAT_ID not set!")
 else:
-    # Start live trade monitor in background
     monitor_thread = threading.Thread(target=monitor_trades)
     monitor_thread.daemon = True
     monitor_thread.start()
 
-    # Start main bot loop
     bot_thread = threading.Thread(target=bot_loop)
     bot_thread.daemon = True
     bot_thread.start()
 
-    # Start web server
     init_gsheet()
     run_web_server()

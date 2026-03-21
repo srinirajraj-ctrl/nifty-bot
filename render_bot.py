@@ -63,7 +63,7 @@ ATR_MULTIPLIER  = 1.5
 
 # ── KEY CHANGES ──
 TRADE_START    = "10:00"   # Changed from 9:15 — avoid opening volatility
-TRADE_END      = "15:30"
+TRADE_END      = "15:15"
 SWING_LOOKBACK = 5
 
 bot_status = {

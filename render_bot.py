@@ -60,9 +60,11 @@ TARGET1_RATIO   = 1.5
 TARGET2_RATIO   = 2.0
 ATR_PERIOD      = 14
 ATR_MULTIPLIER  = 1.5
-TRADE_START     = "9:15"
-TRADE_END       = "15:30"
-SWING_LOOKBACK  = 5
+
+# ── KEY CHANGES ──
+TRADE_START    = "10:00"   # Changed from 9:15 — avoid opening volatility
+TRADE_END      = "15:30"
+SWING_LOOKBACK = 5
 
 bot_status = {
     "last_check"    : "Not started",
@@ -71,6 +73,7 @@ bot_status = {
     "wins"          : 0,
     "losses"        : 0,
     "active_trades" : 0,
+    "skipped_ao"    : 0,   # Count of AO filtered signals
 }
 
 active_trades      = {}
@@ -113,6 +116,7 @@ class BotHandler(BaseHTTPRequestHandler):
             <div class="card">
                 <p>&#x23F1; <b>Timeframe:</b> {INTERVAL}</p>
                 <p>&#x1F557; <b>Hours:</b> {TRADE_START} - {TRADE_END} IST</p>
+                <p>&#x26A0; <b>Opening filter:</b> Skip 9:15-10:00 AM</p>
                 <p>&#x1F4CA; <b>Stocks:</b> {len(STOCKS)}</p>
                 <p>&#x1F6E1; <b>SL:</b> ATR {ATR_MULTIPLIER}x + bsma Trail</p>
             </div>
@@ -120,6 +124,7 @@ class BotHandler(BaseHTTPRequestHandler):
                 <p>&#x1F504; <b>Last Check:</b> {bot_status['last_check']}</p>
                 <p>&#x1F3AF; <b>Last Signal:</b> <span class="green">{bot_status['last_signal']}</span></p>
                 <p>&#x1F4E8; <b>Total Signals:</b> {bot_status['total_signals']}</p>
+                <p>&#x1F6AB; <b>AO Filtered:</b> {bot_status['skipped_ao']}</p>
                 <p class="green">&#x2705; <b>Wins:</b> {bot_status['wins']}</p>
                 <p class="red">&#x274C; <b>Losses:</b> {bot_status['losses']}</p>
                 <p>&#x1F3C6; <b>Win Rate:</b> {win_rate}%</p>
@@ -194,14 +199,10 @@ def log_to_gsheet(name, signal, price, atr, hard_sl, trail_sl, t1, t2, rr, trend
             now.strftime("%d-%b-%Y"),
             now.strftime("%I:%M %p"),
             name, signal,
-            round(price,2),
-            round(atr,2),
-            round(hard_sl,2),
-            round(trail_sl,2),
-            round(t1,2),
-            round(t2,2),
-            rr,
-            trend, ao_signal, ao_div, confidence,
+            round(price,2), round(atr,2),
+            round(hard_sl,2), round(trail_sl,2),
+            round(t1,2), round(t2,2),
+            rr, trend, ao_signal, ao_div, confidence,
             "", "", "MONITORING"
         ])
         all_rows = ws.get_all_values()
@@ -283,6 +284,17 @@ def trade_confidence(signal_type, trend, ao_signal, ao_div):
     if score >= 2: return "👍 MODERATE"
     return "⚠️ WEAK — SKIP"
 
+def ao_contradicts(signal_type, ao_signal):
+    """
+    Returns True if AO directly contradicts the signal direction.
+    BUY + AO BEARISH = contradiction
+    SELL + AO BULLISH = contradiction
+    NEUTRAL = no contradiction
+    """
+    if signal_type == "BUY"  and ao_signal == "BEARISH": return True
+    if signal_type == "SELL" and ao_signal == "BULLISH": return True
+    return False
+
 def alert_signal(stock, price, signal_type, atr, hard_sl, trail_sl, t1, t2, trend, ao_signal, ao_div):
     chart  = get_chart_link(stock['tv'])
     emoji  = "🟢" if signal_type == "BUY" else "🔴"
@@ -353,13 +365,13 @@ def alert_startup():
         f"━━━━━━━━━━━━━━━\n"
         f"📈 Scanning {len(STOCKS)} stocks\n"
         f"🕐 {TRADE_START} – {TRADE_END} IST\n\n"
-        f"✅ Features:\n"
+        f"✅ Active Filters:\n"
         f"• HLC3/KAU Crossover\n"
+        f"• Trend filter (UPTREND/DOWNTREND only)\n"
+        f"• AO confirmation (no contradiction)\n"
         f"• ATR {ATR_MULTIPLIER}x Hard SL\n"
         f"• bsma Trail SL\n"
-        f"• Market Structure HH/HL/LH/LL\n"
-        f"• AO + Divergence\n"
-        f"• Confidence Score\n"
+        f"• Opening filter (skip 9:15-10:00 AM)\n"
         f"• Live Trade Monitoring\n\n"
         f"📋 Stocks:\n{names}\n\n"
         f"⏰ {get_ist_time()}"
@@ -690,11 +702,13 @@ def scan_stock(stock):
             return
         if not last['buy'] and not last['sell']:
             return
+
         signal_type = "BUY" if last['buy'] else "SELL"
         price       = float(last['Close'])
         bsma_val    = float(last['bsma'])
         atr         = calculate_atr(df, ATR_PERIOD)
         sl_dist     = ATR_MULTIPLIER * atr
+
         if signal_type == "BUY":
             hard_sl  = round(price - sl_dist, 2)
             trail_sl = round(bsma_val, 2)
@@ -705,11 +719,27 @@ def scan_stock(stock):
             trail_sl = round(bsma_val, 2)
             t1       = round(price - sl_dist * TARGET1_RATIO, 2)
             t2       = round(price - sl_dist * TARGET2_RATIO, 2)
+
         trend             = detect_market_structure(df)
         ao_signal, ao_div = analyze_ao(df)
-        print(f"  ✅ {signal_type} {name} ATR:{atr:.2f} SL:{hard_sl} T1:{t1} T2:{t2}")
+
+        # ── FILTER 1: Skip SIDEWAYS ──
+        if trend == "SIDEWAYS":
+            print(f"  ⏭ {name}: Skipped — SIDEWAYS market")
+            last_alerts[symbol] = ct
+            return
+
+        # ── FILTER 2: Skip if AO contradicts signal ──
+        if ao_contradicts(signal_type, ao_signal):
+            print(f"  ⏭ {name}: Skipped — AO contradicts signal")
+            bot_status['skipped_ao'] += 1
+            last_alerts[symbol] = ct
+            return
+
+        print(f"  ✅ {signal_type} {name} | {trend} | AO:{ao_signal} | T1:{t1} T2:{t2}")
         alert_signal(stock, price, signal_type, atr, hard_sl, trail_sl, t1, t2, trend, ao_signal, ao_div)
         last_alerts[symbol] = ct
+
     except Exception as e:
         print(f"❌ {name}: {e}")
 
@@ -721,7 +751,7 @@ def run_strategy():
     print(f"\n{'='*40}\n🔄 {get_ist_time()}")
     bot_status['last_check'] = get_ist_time()
     if not is_trading_time():
-        print("⏸  Outside trading hours.")
+        print("⏸  Outside trading hours (10:00 AM - 3:30 PM).")
         return
     print(f"Scanning {len(STOCKS)} stocks...")
     for stock in STOCKS:

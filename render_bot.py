@@ -41,7 +41,6 @@ STOCKS = [
     {"symbol": "DISHTV.NS",     "name": "DISH TV",        "tv": "NSE:DISHTV"},
     {"symbol": "ITI.NS",        "name": "ITI",            "tv": "NSE:ITI"},
     {"symbol": "RVNL.NS",       "name": "RVNL",           "tv": "NSE:RVNL"},
-    {"symbol": "NALCO.NS",      "name": "NALCO",          "tv": "NSE:NALCO"},
     {"symbol": "NMDC.NS",       "name": "NMDC",           "tv": "NSE:NMDC"},
     {"symbol": "HINDCOPPER.NS", "name": "HIND COPPER",    "tv": "NSE:HINDCOPPER"},
     {"symbol": "CENTRALBK.NS",  "name": "CENTRAL BANK",   "tv": "NSE:CENTRALBK"},
@@ -140,11 +139,6 @@ class BotHandler(BaseHTTPRequestHandler):
         </html>
         """
         self.wfile.write(html.encode())
-
-    def do_HEAD(self):
-        self.send_response(200)
-        self.send_header('Content-type', 'text/html')
-        self.end_headers()
 
     def do_HEAD(self):
         self.send_response(200)
@@ -416,7 +410,7 @@ def fetch_data(symbol):
             return df
         except Exception as e:
             print(f"⚠️ {symbol} attempt {attempt+1}: {e}")
-            time.sleep(5)
+            time.sleep(10)
     return None
 
 def fetch_htf(symbol):
@@ -435,7 +429,7 @@ def fetch_htf(symbol):
             return df4h
         except Exception as e:
             print(f"⚠️ HTF {symbol} attempt {attempt+1}: {e}")
-            time.sleep(5)
+            time.sleep(10)
     return None
 
 def get_current_price(symbol):
@@ -448,7 +442,7 @@ def get_current_price(symbol):
             return float(data['Close'].iloc[-1])
         except Exception as e:
             print(f"⚠️ Price {symbol} attempt {attempt+1}: {e}")
-            time.sleep(5)
+            time.sleep(10)
     return None
 
 
@@ -765,7 +759,7 @@ def run_strategy():
     print(f"Scanning {len(STOCKS)} stocks...")
     for stock in STOCKS:
         scan_stock(stock)
-        time.sleep(4)
+        time.sleep(6)
 
 def bot_loop():
     print("🚀 Bot loop starting...")

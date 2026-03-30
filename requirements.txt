@@ -1,9 +1,7 @@
-yfinance==0.2.32
-pandas==2.0.3
-numpy==1.24.3
-requests==2.31.0
-pytz==2023.3
-gspread==5.11.0
-google-auth-httplib2==0.2.0
-google-auth-oauthlib==1.1.0
-google-cloud-storage==2.10.0
+yfinance
+pandas
+numpy
+requests
+pytz
+gspread
+google-auth

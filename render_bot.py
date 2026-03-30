@@ -7,7 +7,8 @@ import pytz
 import os
 import json
 import threading
-from datetime import datetime
+import gc
+from datetime import datetime, timedelta
 from http.server import HTTPServer, BaseHTTPRequestHandler
 import warnings
 warnings.filterwarnings('ignore')
@@ -77,6 +78,42 @@ bot_status = {
 active_trades      = {}
 active_trades_lock = threading.Lock()
 
+# ──────────────────────────────────────────
+#  💾 DATA CACHE
+# ──────────────────────────────────────────
+class DataCache:
+    def __init__(self, max_age_minutes=3, max_size_mb=50):
+        self.cache = {}
+        self.timestamps = {}
+        self.max_age = timedelta(minutes=max_age_minutes)
+        self.max_size = max_size_mb * 1024 * 1024
+        
+    def get(self, key):
+        if key not in self.cache:
+            return None
+        if datetime.now() - self.timestamps[key] > self.max_age:
+            del self.cache[key]
+            del self.timestamps[key]
+            return None
+        return self.cache[key]
+    
+    def set(self, key, value):
+        self._cleanup_if_needed()
+        self.cache[key] = value
+        self.timestamps[key] = datetime.now()
+    
+    def _cleanup_if_needed(self):
+        if len(self.cache) > 50:
+            oldest_key = min(self.timestamps, key=self.timestamps.get)
+            del self.cache[oldest_key]
+            del self.timestamps[oldest_key]
+    
+    def clear(self):
+        self.cache.clear()
+        self.timestamps.clear()
+
+data_cache = DataCache(max_age_minutes=3)
+alert_history = {}
 
 # ──────────────────────────────────────────
 #  🌐 WEB SERVER
@@ -154,7 +191,6 @@ def run_web_server():
     print(f"✅ Web server on port {port}")
     server.serve_forever()
 
-
 # ──────────────────────────────────────────
 #  📊 GOOGLE SHEETS
 # ──────────────────────────────────────────
@@ -229,7 +265,6 @@ def update_outcome(row_num, exit_price, pnl, result):
     except Exception as e:
         print(f"❌ Outcome update: {e}")
 
-
 # ──────────────────────────────────────────
 #  📡 TELEGRAM
 # ──────────────────────────────────────────
@@ -248,9 +283,6 @@ def send_telegram(msg):
 
 def get_ist_time():
     return datetime.now(pytz.timezone('Asia/Kolkata')).strftime("%d-%b-%Y %I:%M %p IST")
-
-def get_ist_time_short():
-    return datetime.now(pytz.timezone('Asia/Kolkata')).strftime("%I:%M %p")
 
 def get_chart_link(tv_symbol):
     return f"https://www.tradingview.com/chart/?symbol={tv_symbol}&interval={TV_INTERVAL}"
@@ -288,12 +320,6 @@ def trade_confidence(signal_type, trend, ao_signal, ao_div):
     return "⚠️ WEAK — SKIP"
 
 def ao_contradicts(signal_type, ao_signal):
-    """
-    Returns True if AO directly contradicts the signal direction.
-    BUY + AO BEARISH = contradiction
-    SELL + AO BULLISH = contradiction
-    NEUTRAL = no contradiction
-    """
     if signal_type == "BUY"  and ao_signal == "BEARISH": return True
     if signal_type == "SELL" and ao_signal == "BULLISH": return True
     return False
@@ -380,7 +406,6 @@ def alert_startup():
         f"⏰ {get_ist_time()}"
     )
 
-
 # ──────────────────────────────────────────
 #  🕐 TIME CHECK
 # ──────────────────────────────────────────
@@ -395,11 +420,15 @@ def is_trading_time():
     end    = now.replace(hour=eh, minute=em, second=0, microsecond=0)
     return start <= now <= end
 
-
 # ──────────────────────────────────────────
 #  📦 DATA FETCH
 # ──────────────────────────────────────────
 def fetch_data(symbol):
+    cache_key = f"{symbol}_5m"
+    cached = data_cache.get(cache_key)
+    if cached is not None:
+        return cached
+    
     for attempt in range(3):
         try:
             df = yf.download(symbol, interval=INTERVAL, period="5d", progress=False)
@@ -407,16 +436,26 @@ def fetch_data(symbol):
                 return None
             df.columns = [c[0] if isinstance(c, tuple) else c for c in df.columns]
             df = df[['Open','High','Low','Close','Volume']].dropna()
+            
+            if len(df) > 100:
+                df = df.iloc[-100:]
+            
+            data_cache.set(cache_key, df)
             return df
         except Exception as e:
             print(f"⚠️ {symbol} attempt {attempt+1}: {e}")
-            time.sleep(10)
+            time.sleep(5)
     return None
 
 def fetch_htf(symbol):
+    cache_key = f"{symbol}_4h"
+    cached = data_cache.get(cache_key)
+    if cached is not None:
+        return cached
+    
     for attempt in range(3):
         try:
-            df = yf.download(symbol, interval="1h", period="60d", progress=False)
+            df = yf.download(symbol, interval="1h", period="30d", progress=False)
             if df.empty:
                 return None
             df.columns = [c[0] if isinstance(c, tuple) else c for c in df.columns]
@@ -426,10 +465,15 @@ def fetch_htf(symbol):
                 'Low':'min','Close':'last','Volume':'sum'
             }).dropna()
             df4h['hlc3'] = (df4h['High'] + df4h['Low'] + df4h['Close']) / 3
+            
+            if len(df4h) > 50:
+                df4h = df4h.iloc[-50:]
+            
+            data_cache.set(cache_key, df4h)
             return df4h
         except Exception as e:
             print(f"⚠️ HTF {symbol} attempt {attempt+1}: {e}")
-            time.sleep(10)
+            time.sleep(5)
     return None
 
 def get_current_price(symbol):
@@ -442,9 +486,8 @@ def get_current_price(symbol):
             return float(data['Close'].iloc[-1])
         except Exception as e:
             print(f"⚠️ Price {symbol} attempt {attempt+1}: {e}")
-            time.sleep(10)
+            time.sleep(5)
     return None
-
 
 # ──────────────────────────────────────────
 #  📐 INDICATORS
@@ -483,7 +526,6 @@ def awesome_oscillator(df):
     mid = (df['High'] + df['Low']) / 2
     return mid.rolling(5).mean() - mid.rolling(34).mean()
 
-
 # ──────────────────────────────────────────
 #  📊 MARKET STRUCTURE
 # ──────────────────────────────────────────
@@ -508,7 +550,6 @@ def detect_market_structure(df):
     if hh and hl:   return "UPTREND"
     elif lh and ll: return "DOWNTREND"
     else:           return "SIDEWAYS"
-
 
 # ──────────────────────────────────────────
 #  📊 AO ANALYSIS
@@ -550,7 +591,6 @@ def analyze_ao(df):
             ao_div = "BEARISH_DIV"
     return ao_signal, ao_div
 
-
 # ──────────────────────────────────────────
 #  🔬 BUILD SIGNALS
 # ──────────────────────────────────────────
@@ -566,7 +606,6 @@ def build(df, df4h):
     df['buy']      = (df['bfma'] > df['bsma']) & (pb <= ps)
     df['sell']     = (df['bfma'] < df['bsma']) & (pb >= ps)
     return df
-
 
 # ──────────────────────────────────────────
 #  👁 LIVE TRADE MONITOR
@@ -678,12 +717,9 @@ def monitor_trades():
             print(f"❌ Monitor error: {e}")
         time.sleep(60)
 
-
 # ──────────────────────────────────────────
 #  🔄 SCAN EACH STOCK
 # ──────────────────────────────────────────
-last_alerts = {}
-
 def scan_stock(stock):
     symbol = stock['symbol']
     name   = stock['name']
@@ -691,18 +727,23 @@ def scan_stock(stock):
         with active_trades_lock:
             if symbol in active_trades:
                 return
+        
         df  = fetch_data(symbol)
         d4h = fetch_htf(symbol)
         if df is None or d4h is None:
             return
         if len(df) < 40:
             return
+        
         df   = build(df, d4h)
         last = df.iloc[-2]
         ct   = str(df.index[-2])
-        print(f"  {name}: {last['Close']:.2f} BUY:{last['buy']} SELL:{last['sell']}")
-        if last_alerts.get(symbol) == ct:
+        
+        alert_key = f"{symbol}_{ct}"
+        if alert_key in alert_history:
             return
+        
+        print(f"  {name}: {last['Close']:.2f} BUY:{last['buy']} SELL:{last['sell']}")
         if not last['buy'] and not last['sell']:
             return
 
@@ -726,26 +767,27 @@ def scan_stock(stock):
         trend             = detect_market_structure(df)
         ao_signal, ao_div = analyze_ao(df)
 
-        # ── FILTER 1: Skip SIDEWAYS ──
         if trend == "SIDEWAYS":
             print(f"  ⏭ {name}: Skipped — SIDEWAYS market")
-            last_alerts[symbol] = ct
+            alert_history[alert_key] = True
             return
 
-        # ── FILTER 2: Skip if AO contradicts signal ──
         if ao_contradicts(signal_type, ao_signal):
             print(f"  ⏭ {name}: Skipped — AO contradicts signal")
             bot_status['skipped_ao'] += 1
-            last_alerts[symbol] = ct
+            alert_history[alert_key] = True
             return
 
         print(f"  ✅ {signal_type} {name} | {trend} | AO:{ao_signal} | T1:{t1} T2:{t2}")
         alert_signal(stock, price, signal_type, atr, hard_sl, trail_sl, t1, t2, trend, ao_signal, ao_div)
-        last_alerts[symbol] = ct
+        alert_history[alert_key] = True
+        
+        if len(alert_history) > 100:
+            oldest_key = next(iter(alert_history))
+            del alert_history[oldest_key]
 
     except Exception as e:
         print(f"❌ {name}: {e}")
-
 
 # ──────────────────────────────────────────
 #  🔄 MAIN LOOP
@@ -759,7 +801,9 @@ def run_strategy():
     print(f"Scanning {len(STOCKS)} stocks...")
     for stock in STOCKS:
         scan_stock(stock)
-        time.sleep(6)
+        time.sleep(4)
+    
+    gc.collect()
 
 def bot_loop():
     print("🚀 Bot loop starting...")
@@ -771,20 +815,20 @@ def bot_loop():
             print(f"❌ Error: {e}")
         time.sleep(60)
 
-
 # ──────────────────────────────────────────
 #  ▶️ START
 # ──────────────────────────────────────────
-if not TELEGRAM_BOT_TOKEN:
-    print("❌ TELEGRAM_BOT_TOKEN not set!")
-elif not TELEGRAM_CHAT_ID:
-    print("❌ TELEGRAM_CHAT_ID not set!")
-else:
-    monitor_thread = threading.Thread(target=monitor_trades)
-    monitor_thread.daemon = True
-    monitor_thread.start()
-    bot_thread = threading.Thread(target=bot_loop)
-    bot_thread.daemon = True
-    bot_thread.start()
-    init_gsheet()
-    run_web_server()
+if __name__ == "__main__":
+    if not TELEGRAM_BOT_TOKEN:
+        print("❌ TELEGRAM_BOT_TOKEN not set!")
+    elif not TELEGRAM_CHAT_ID:
+        print("❌ TELEGRAM_CHAT_ID not set!")
+    else:
+        monitor_thread = threading.Thread(target=monitor_trades)
+        monitor_thread.daemon = True
+        monitor_thread.start()
+        bot_thread = threading.Thread(target=bot_loop)
+        bot_thread.daemon = True
+        bot_thread.start()
+        init_gsheet()
+        run_web_server()

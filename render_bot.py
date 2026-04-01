@@ -22,7 +22,7 @@ GOOGLE_SHEET_ID    = os.environ.get("GOOGLE_SHEET_ID", "")
 GOOGLE_CREDS_JSON  = os.environ.get("GOOGLE_CREDS_JSON", "")
 
 # ──────────────────────────────────────────
-#  📋 STOCKS TO SCAN
+#  📋 STOCKS TO SCAN (22 STOCKS)
 # ──────────────────────────────────────────
 STOCKS = [
     {"symbol": "^NSEI",         "name": "NIFTY 50",       "tv": "NSE:NIFTY"},
@@ -61,7 +61,7 @@ TARGET2_RATIO   = 2.0
 ATR_PERIOD      = 14
 ATR_MULTIPLIER  = 1.5
 
-TRADE_START    = "09:20"
+TRADE_START    = "10:00"
 TRADE_END      = "15:15"
 SWING_LOOKBACK = 5
 
@@ -77,43 +77,6 @@ bot_status = {
 
 active_trades      = {}
 active_trades_lock = threading.Lock()
-
-# ──────────────────────────────────────────
-#  💾 DATA CACHE
-# ──────────────────────────────────────────
-class DataCache:
-    def __init__(self, max_age_minutes=3, max_size_mb=50):
-        self.cache = {}
-        self.timestamps = {}
-        self.max_age = timedelta(minutes=max_age_minutes)
-        self.max_size = max_size_mb * 1024 * 1024
-        
-    def get(self, key):
-        if key not in self.cache:
-            return None
-        if datetime.now() - self.timestamps[key] > self.max_age:
-            del self.cache[key]
-            del self.timestamps[key]
-            return None
-        return self.cache[key]
-    
-    def set(self, key, value):
-        self._cleanup_if_needed()
-        self.cache[key] = value
-        self.timestamps[key] = datetime.now()
-    
-    def _cleanup_if_needed(self):
-        if len(self.cache) > 50:
-            oldest_key = min(self.timestamps, key=self.timestamps.get)
-            del self.cache[oldest_key]
-            del self.timestamps[oldest_key]
-    
-    def clear(self):
-        self.cache.clear()
-        self.timestamps.clear()
-
-data_cache = DataCache(max_age_minutes=3)
-alert_history = {}
 
 # ──────────────────────────────────────────
 #  🌐 WEB SERVER
@@ -284,6 +247,9 @@ def send_telegram(msg):
 def get_ist_time():
     return datetime.now(pytz.timezone('Asia/Kolkata')).strftime("%d-%b-%Y %I:%M %p IST")
 
+def get_ist_time_short():
+    return datetime.now(pytz.timezone('Asia/Kolkata')).strftime("%I:%M %p")
+
 def get_chart_link(tv_symbol):
     return f"https://www.tradingview.com/chart/?symbol={tv_symbol}&interval={TV_INTERVAL}"
 
@@ -424,11 +390,6 @@ def is_trading_time():
 #  📦 DATA FETCH
 # ──────────────────────────────────────────
 def fetch_data(symbol):
-    cache_key = f"{symbol}_5m"
-    cached = data_cache.get(cache_key)
-    if cached is not None:
-        return cached
-    
     for attempt in range(3):
         try:
             df = yf.download(symbol, interval=INTERVAL, period="5d", progress=False)
@@ -436,26 +397,16 @@ def fetch_data(symbol):
                 return None
             df.columns = [c[0] if isinstance(c, tuple) else c for c in df.columns]
             df = df[['Open','High','Low','Close','Volume']].dropna()
-            
-            if len(df) > 100:
-                df = df.iloc[-100:]
-            
-            data_cache.set(cache_key, df)
             return df
         except Exception as e:
             print(f"⚠️ {symbol} attempt {attempt+1}: {e}")
-            time.sleep(5)
+            time.sleep(20)  # INCREASED DELAY
     return None
 
 def fetch_htf(symbol):
-    cache_key = f"{symbol}_4h"
-    cached = data_cache.get(cache_key)
-    if cached is not None:
-        return cached
-    
     for attempt in range(3):
         try:
-            df = yf.download(symbol, interval="1h", period="30d", progress=False)
+            df = yf.download(symbol, interval="1h", period="60d", progress=False)
             if df.empty:
                 return None
             df.columns = [c[0] if isinstance(c, tuple) else c for c in df.columns]
@@ -465,15 +416,10 @@ def fetch_htf(symbol):
                 'Low':'min','Close':'last','Volume':'sum'
             }).dropna()
             df4h['hlc3'] = (df4h['High'] + df4h['Low'] + df4h['Close']) / 3
-            
-            if len(df4h) > 50:
-                df4h = df4h.iloc[-50:]
-            
-            data_cache.set(cache_key, df4h)
             return df4h
         except Exception as e:
             print(f"⚠️ HTF {symbol} attempt {attempt+1}: {e}")
-            time.sleep(5)
+            time.sleep(20)  # INCREASED DELAY
     return None
 
 def get_current_price(symbol):
@@ -486,7 +432,7 @@ def get_current_price(symbol):
             return float(data['Close'].iloc[-1])
         except Exception as e:
             print(f"⚠️ Price {symbol} attempt {attempt+1}: {e}")
-            time.sleep(5)
+            time.sleep(20)  # INCREASED DELAY
     return None
 
 # ──────────────────────────────────────────
@@ -720,30 +666,30 @@ def monitor_trades():
 # ──────────────────────────────────────────
 #  🔄 SCAN EACH STOCK
 # ──────────────────────────────────────────
+# FIX #1: BOUNDED ALERT HISTORY
+last_alerts = {}
+max_alert_history = 500  # Keep only last 500 entries
+
 def scan_stock(stock):
+    global last_alerts
     symbol = stock['symbol']
     name   = stock['name']
     try:
         with active_trades_lock:
             if symbol in active_trades:
                 return
-        
         df  = fetch_data(symbol)
         d4h = fetch_htf(symbol)
         if df is None or d4h is None:
             return
         if len(df) < 40:
             return
-        
         df   = build(df, d4h)
         last = df.iloc[-2]
         ct   = str(df.index[-2])
-        
-        alert_key = f"{symbol}_{ct}"
-        if alert_key in alert_history:
-            return
-        
         print(f"  {name}: {last['Close']:.2f} BUY:{last['buy']} SELL:{last['sell']}")
+        if last_alerts.get(symbol) == ct:
+            return
         if not last['buy'] and not last['sell']:
             return
 
@@ -769,22 +715,23 @@ def scan_stock(stock):
 
         if trend == "SIDEWAYS":
             print(f"  ⏭ {name}: Skipped — SIDEWAYS market")
-            alert_history[alert_key] = True
+            last_alerts[symbol] = ct
             return
 
         if ao_contradicts(signal_type, ao_signal):
             print(f"  ⏭ {name}: Skipped — AO contradicts signal")
             bot_status['skipped_ao'] += 1
-            alert_history[alert_key] = True
+            last_alerts[symbol] = ct
             return
 
         print(f"  ✅ {signal_type} {name} | {trend} | AO:{ao_signal} | T1:{t1} T2:{t2}")
         alert_signal(stock, price, signal_type, atr, hard_sl, trail_sl, t1, t2, trend, ao_signal, ao_div)
-        alert_history[alert_key] = True
+        last_alerts[symbol] = ct
         
-        if len(alert_history) > 100:
-            oldest_key = next(iter(alert_history))
-            del alert_history[oldest_key]
+        # FIX #2: CLEANUP old alerts if too many
+        if len(last_alerts) > max_alert_history:
+            oldest_symbol = list(last_alerts.keys())[0]
+            del last_alerts[oldest_symbol]
 
     except Exception as e:
         print(f"❌ {name}: {e}")
@@ -801,8 +748,9 @@ def run_strategy():
     print(f"Scanning {len(STOCKS)} stocks...")
     for stock in STOCKS:
         scan_stock(stock)
-        time.sleep(4)
+        time.sleep(6)  # INCREASED FROM 4 TO 6
     
+    # FIX #3: GARBAGE COLLECTION
     gc.collect()
 
 def bot_loop():
@@ -813,7 +761,7 @@ def bot_loop():
             run_strategy()
         except Exception as e:
             print(f"❌ Error: {e}")
-        time.sleep(60)
+        time.sleep(90)  # INCREASED FROM 60 TO 90 SECONDS
 
 # ──────────────────────────────────────────
 #  ▶️ START

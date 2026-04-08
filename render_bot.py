@@ -312,39 +312,32 @@ def trade_confidence(signal_type, trend, ao_signal, ao_div):
 # FIX: NEW STRICT FILTERING
 def is_signal_strong_enough(signal_type, trend, ao_signal, ao_div, confidence_str):
     """
-    STRICT RULES - Only allow VERY STRONG or STRONG signals
+    HYBRID TIER SYSTEM - Balance quality + quantity
     
     Rules:
-    1. Trend MUST be UPTREND (BUY) or DOWNTREND (SELL) - NO SIDEWAYS
-    2. AO MUST confirm signal direction - NO NEUTRAL
-    3. MUST be STRONG (💪) or VERY STRONG (🔥) confidence
-    4. Divergence is bonus but not required
+    1. Trend MUST be UPTREND/DOWNTREND (no SIDEWAYS)
+    2. Confidence MUST be at least MODERATE (👍 or better)
+    3. AO should not directly contradict
+    4. Accept: MODERATE, STRONG, VERY STRONG
+    5. Reject: WEAK signals only
     """
     
     # RULE 1: NO SIDEWAYS TRENDS
     if trend == "SIDEWAYS":
-        print(f"    ❌ Rejected: SIDEWAYS trend (needs UPTREND/DOWNTREND)")
         return False
     
-    # RULE 2: AO MUST CONFIRM (not neutral)
-    if ao_signal == "NEUTRAL":
-        print(f"    ❌ Rejected: AO is NEUTRAL (needs BULLISH/BEARISH)")
+    # RULE 2: REJECT WEAK SIGNALS ONLY
+    if confidence_str == "⚠️ WEAK — SKIP":
         return False
     
-    # RULE 3: MUST BE STRONG OR VERY STRONG
-    if confidence_str not in ["💪 STRONG", "🔥 VERY STRONG"]:
-        print(f"    ❌ Rejected: Confidence too weak ({confidence_str})")
-        return False
-    
-    # RULE 4: AO must not contradict
+    # RULE 3: AO must not contradict
     if signal_type == "BUY" and ao_signal == "BEARISH":
-        print(f"    ❌ Rejected: AO BEARISH contradicts BUY signal")
         return False
     if signal_type == "SELL" and ao_signal == "BULLISH":
-        print(f"    ❌ Rejected: AO BULLISH contradicts SELL signal")
         return False
     
-    # ✅ PASSED ALL STRICT CHECKS
+    # ✅ PASSED HYBRID CHECKS
+    # Accept: MODERATE, STRONG, VERY STRONG + clear trends
     return True
 
 def ao_contradicts(signal_type, ao_signal):

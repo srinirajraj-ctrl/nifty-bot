@@ -312,32 +312,40 @@ def trade_confidence(signal_type, trend, ao_signal, ao_div):
 # FIX: NEW STRICT FILTERING
 def is_signal_strong_enough(signal_type, trend, ao_signal, ao_div, confidence_str):
     """
-    HYBRID TIER SYSTEM - Balance quality + quantity
+    IMPROVED HYBRID TIER SYSTEM v2.0
     
-    Rules:
+    Key Changes:
     1. Trend MUST be UPTREND/DOWNTREND (no SIDEWAYS)
-    2. Confidence MUST be at least MODERATE (👍 or better)
-    3. AO should not directly contradict
-    4. Accept: MODERATE, STRONG, VERY STRONG
-    5. Reject: WEAK signals only
+    2. NO AO contradictions
+    3. MODERATE confidence: Requires AO confirmation (not NEUTRAL) ← IMPROVED!
+    4. STRONG/VERY STRONG: Can have NEUTRAL AO (confident enough)
+    
+    This prevents signals like the 09-Apr loss (MODERATE + NEUTRAL AO)
     """
     
     # RULE 1: NO SIDEWAYS TRENDS
     if trend == "SIDEWAYS":
         return False
     
-    # RULE 2: REJECT WEAK SIGNALS ONLY
-    if confidence_str == "⚠️ WEAK — SKIP":
-        return False
-    
-    # RULE 3: AO must not contradict
+    # RULE 2: Reject AO contradictions
     if signal_type == "BUY" and ao_signal == "BEARISH":
         return False
     if signal_type == "SELL" and ao_signal == "BULLISH":
         return False
     
-    # ✅ PASSED HYBRID CHECKS
-    # Accept: MODERATE, STRONG, VERY STRONG + clear trends
+    # RULE 3: Reject WEAK signals
+    if confidence_str == "⚠️ WEAK — SKIP":
+        return False
+    
+    # RULE 4: IMPROVED - MODERATE signals need AO confirmation
+    # Don't trade MODERATE confidence on NEUTRAL AO
+    if confidence_str == "👍 MODERATE" and ao_signal == "NEUTRAL":
+        return False
+    
+    # ✅ ACCEPT:
+    # ✅ MODERATE + BULLISH/BEARISH AO (confirmed)
+    # ✅ STRONG + any AO (strong confidence)
+    # ✅ VERY STRONG + any AO (very strong confidence)
     return True
 
 def ao_contradicts(signal_type, ao_signal):

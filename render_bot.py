@@ -51,8 +51,8 @@ TARGET2_RATIO   = 2.0
 ATR_PERIOD      = 14
 ATR_MULTIPLIER  = 1.5
 
-TRADE_START    = "10:00"
-TRADE_END      = "15:15"
+TRADE_START    = "9:15"
+TRADE_END      = "14:15"
 SWING_LOOKBACK = 5
 
 bot_status = {

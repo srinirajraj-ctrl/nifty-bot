@@ -46,13 +46,13 @@ SLOW_EMA_PERIOD = 20
 KAMA_LENGTH     = 5
 KAMA_FASTEND    = 2.5
 KAMA_SLOWEND    = 20
-TARGET1_RATIO   = 1.5
-TARGET2_RATIO   = 2.0
+TARGET1_RATIO   = 3.0
+TARGET2_RATIO   = 3.0
 ATR_PERIOD      = 14
 ATR_MULTIPLIER  = 1.5
 
-TRADE_START    = "9:15"
-TRADE_END      = "14:15"
+TRADE_START    = "09:15"
+TRADE_END      = "15:15"
 SWING_LOOKBACK = 5
 
 bot_status = {
@@ -141,7 +141,7 @@ class BotHandler(BaseHTTPRequestHandler):
             <div class="card">
                 <p>&#x23F1; <b>Timeframe:</b> {INTERVAL}</p>
                 <p>&#x1F557; <b>Hours:</b> {TRADE_START} - {TRADE_END} IST</p>
-                <p>&#x26A0; <b>Opening filter:</b> Skip 9:15-10:00 AM</p>
+                <p>&#x26A0; <b>Trading:</b> From 9:15 AM IST</p>
                 <p>&#x1F4CA; <b>Stocks:</b> {len(STOCKS)}</p>
                 <p>&#x1F6E1; <b>SL:</b> ATR {ATR_MULTIPLIER}x + bsma Trail</p>
             </div>
@@ -427,9 +427,9 @@ def alert_startup():
         f"• HLC3/KAU Crossover\n"
         f"• Trend filter (UPTREND/DOWNTREND only)\n"
         f"• AO confirmation (no contradiction)\n"
+        f"• MODERATE requires AO confirmation (v2)\n"
         f"• ATR {ATR_MULTIPLIER}x Hard SL\n"
         f"• bsma Trail SL\n"
-        f"• Opening filter (skip 9:15-10:00 AM)\n"
         f"• Live Trade Monitoring\n\n"
         f"📋 Stocks:\n{names}\n\n"
         f"⏰ {get_ist_time()}"

@@ -46,8 +46,10 @@ SLOW_EMA_PERIOD = 20
 KAMA_LENGTH     = 5
 KAMA_FASTEND    = 2.5
 KAMA_SLOWEND    = 20
-TARGET1_RATIO   = 3.0
-TARGET2_RATIO   = 3.0
+# RISK:REWARD USING MAX DRAWDOWN PERCENTAGE
+MAX_DRAWDOWN_PERCENT = 2.0    # Risk: 2% max drawdown per trade (REALISTIC!) ✅
+RR_RATIO = 3.0                # Reward: 3× the risk (1:3)
+
 ATR_PERIOD      = 14
 ATR_MULTIPLIER  = 1.5
 
@@ -561,6 +563,39 @@ def calculate_atr(df, period=14):
     ], axis=1).max(axis=1)
     return float(tr.rolling(period).mean().iloc[-1])
 
+def calculate_sl_targets_by_drawdown(price, signal_type, max_dd_percent=1.0, rr_ratio=3.0):
+    """
+    Calculate SL and Targets based on Max Drawdown %
+    
+    Parameters:
+    - price: Entry price
+    - signal_type: "BUY" or "SELL"
+    - max_dd_percent: Max drawdown % per trade (default 1%)
+    - rr_ratio: Risk:Reward ratio (default 3.0 for 1:3)
+    
+    Returns: (hard_sl, trail_sl, target, risk_points, reward_points)
+    
+    Example:
+    Price = 24000, max_dd = 1.0%
+    Risk = 24000 × 1% = 240 points
+    Target = 24000 + (240 × 3) = 24720 (1:3 ratio)
+    """
+    
+    # Calculate risk in points based on % of entry price
+    risk_points = price * (max_dd_percent / 100.0)
+    reward_points = risk_points * rr_ratio
+    
+    if signal_type == "BUY":
+        hard_sl = round(price - risk_points, 2)
+        trail_sl = hard_sl
+        target = round(price + reward_points, 2)
+    else:  # SELL
+        hard_sl = round(price + risk_points, 2)
+        trail_sl = hard_sl
+        target = round(price - reward_points, 2)
+    
+    return hard_sl, trail_sl, target, risk_points, reward_points
+
 def awesome_oscillator(df):
     mid = (df['High'] + df['Low']) / 2
     return mid.rolling(5).mean() - mid.rolling(34).mean()
@@ -789,19 +824,19 @@ def scan_stock(stock):
         signal_type = "BUY" if last['buy'] else "SELL"
         price       = float(last['Close'])
         bsma_val    = float(last['bsma'])
-        atr         = calculate_atr(df, ATR_PERIOD)
-        sl_dist     = ATR_MULTIPLIER * atr
-
-        if signal_type == "BUY":
-            hard_sl  = round(price - sl_dist, 2)
-            trail_sl = round(bsma_val, 2)
-            t1       = round(price + sl_dist * TARGET1_RATIO, 2)
-            t2       = round(price + sl_dist * TARGET2_RATIO, 2)
-        else:
-            hard_sl  = round(price + sl_dist, 2)
-            trail_sl = round(bsma_val, 2)
-            t1       = round(price - sl_dist * TARGET1_RATIO, 2)
-            t2       = round(price - sl_dist * TARGET2_RATIO, 2)
+        
+        # NEW: Use Max Drawdown % based RR calculation
+        hard_sl, trail_sl, target, risk_pts, reward_pts = calculate_sl_targets_by_drawdown(
+            price, 
+            signal_type, 
+            max_dd_percent=MAX_DRAWDOWN_PERCENT,
+            rr_ratio=RR_RATIO
+        )
+        
+        # For compatibility, set t1 and t2 to target (they're the same now)
+        t1 = target
+        t2 = target
+        atr = calculate_atr(df, ATR_PERIOD)  # Keep for other uses
 
         trend             = detect_market_structure(df)
         ao_signal, ao_div = analyze_ao(df)

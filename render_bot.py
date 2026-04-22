@@ -134,8 +134,14 @@ def detect_reversal_pattern(df_5m):
 def generate_signal(df_5m, is_manipulated, pattern):
     if is_manipulated or pattern is None or pattern == "NO_PATTERN": return None
     current = float(df_5m.iloc[-1]['Close'])
-    if "BULLISH" in pattern: return {'type': 'BUY', 'entry': current, 'pattern': pattern}
-    if "BEARISH" in pattern: return {'type': 'SELL', 'entry': current, 'pattern': pattern}
+    if "BULLISH" in pattern: 
+        sl = current * 0.98  # 2% below entry
+        tp = current * 1.03  # 3% above entry
+        return {'type': 'BUY', 'entry': current, 'sl': sl, 'tp': tp, 'pattern': pattern}
+    if "BEARISH" in pattern: 
+        sl = current * 1.02  # 2% above entry
+        tp = current * 0.97  # 3% below entry
+        return {'type': 'SELL', 'entry': current, 'sl': sl, 'tp': tp, 'pattern': pattern}
     return None
 
 def alert_signal(stock, pattern, signal):
@@ -143,9 +149,15 @@ def alert_signal(stock, pattern, signal):
     bot_status['total_signals'] += 1
     emoji = "🟢" if signal['type'] == "BUY" else "🔴"
     entry = signal['entry']
-    send_telegram(f"{emoji} <b>{signal['type']} {stock['name']}</b>\nEntry: {entry:.2f}\nPattern: {pattern}\n{get_ist_time()}")
+    sl = signal['sl']
+    tp = signal['tp']
+    risk = abs(entry - sl)
+    reward = abs(tp - entry)
+    rr = reward / risk if risk > 0 else 0
+    chart_url = f"https://www.tradingview.com/chart/?symbol={stock['tv']}&interval=5"
+    send_telegram(f"{emoji} <b>{signal['type']} {stock['name']}</b>\n\n📍 Entry: {entry:.2f}\n🛡 SL: {sl:.2f} ({risk:.2f} pts)\n🎯 TP: {tp:.2f} ({reward:.2f} pts)\n📊 R:R: 1:{rr:.1f}\nPattern: {pattern}\n\n📊 <a href='{chart_url}'>Open TradingView Chart</a>\n\n{get_ist_time()}")
     with active_trades_lock:
-        active_trades[stock['symbol']] = {"name": stock['name'], "signal": signal['type'], "entry": entry, "symbol": stock['symbol']}
+        active_trades[stock['symbol']] = {"name": stock['name'], "signal": signal['type'], "entry": entry, "sl": sl, "tp": tp, "symbol": stock['symbol']}
         bot_status['active_trades'] = len(active_trades)
 
 def is_trading_time():
@@ -255,4 +267,83 @@ if __name__ == "__main__":
         bot_thread = threading.Thread(target=bot_loop)
         bot_thread.daemon = True
         bot_thread.start()
+        run_web_server()
+
+def monitor_trades():
+    while True:
+        try:
+            with active_trades_lock:
+                symbols = list(active_trades.keys())
+            
+            for symbol in symbols:
+                with active_trades_lock:
+                    if symbol not in active_trades:
+                        continue
+                    trade = active_trades[symbol].copy()
+                
+                price = get_current_price(symbol)
+                if price is None:
+                    continue
+                
+                name = trade['name']
+                signal_type = trade['signal']
+                entry = trade['entry']
+                sl = trade['sl']
+                tp = trade['tp']
+                row = trade['row']
+                
+                result = None
+                pnl = 0
+                exit_price = price
+                
+                if signal_type == "BUY":
+                    pnl = price - entry
+                    if price >= tp:
+                        result = "✅ WIN TP"
+                        exit_price = tp
+                        bot_status['wins'] += 1
+                    elif price <= sl:
+                        result = "❌ LOSS SL"
+                        exit_price = sl
+                        pnl = sl - entry
+                        bot_status['losses'] += 1
+                
+                elif signal_type == "SELL":
+                    pnl = entry - price
+                    if price <= tp:
+                        result = "✅ WIN TP"
+                        exit_price = tp
+                        bot_status['wins'] += 1
+                    elif price >= sl:
+                        result = "❌ LOSS SL"
+                        exit_price = sl
+                        pnl = entry - sl
+                        bot_status['losses'] += 1
+                
+                if result:
+                    emoji = "✅" if "WIN" in result else "❌"
+                    send_telegram(f"{emoji} <b>{name}</b>\n{signal_type} | Entry: {entry:.2f} | Exit: {exit_price:.2f} | P&L: {pnl:+.2f}\n{result}\n{get_ist_time()}")
+                    update_outcome(row, exit_price, pnl, result)
+                    with active_trades_lock:
+                        active_trades.pop(symbol, None)
+                        bot_status['active_trades'] = len(active_trades)
+                    print(f"✅ {name} {result}")
+                
+                time.sleep(3)
+        except Exception as e:
+            print(f"❌ Monitor: {e}")
+        time.sleep(60)
+
+if __name__ == "__main__":
+    if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID:
+        print("❌ Missing credentials!")
+    else:
+        monitor_thread = threading.Thread(target=monitor_trades)
+        monitor_thread.daemon = True
+        monitor_thread.start()
+        
+        bot_thread = threading.Thread(target=bot_loop)
+        bot_thread.daemon = True
+        bot_thread.start()
+        
         run_web_server()

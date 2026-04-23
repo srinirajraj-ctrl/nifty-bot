@@ -1,4 +1,3 @@
-
 import yfinance as yf
 import pandas as pd
 import numpy as np
@@ -301,34 +300,83 @@ def monitor_trades():
         try:
             with active_trades_lock:
                 symbols = list(active_trades.keys())
+            
             for symbol in symbols:
                 with active_trades_lock:
-                    if symbol not in active_trades: continue
+                    if symbol not in active_trades:
+                        continue
                     trade = active_trades[symbol].copy()
+                
                 price = get_current_price(symbol)
-                if price is None: continue
-                name, signal_type, entry, sl, tp, row_num = trade['name'], trade['signal'], trade['entry'], trade['sl'], trade['tp'], trade['row']
+                if price is None:
+                    continue
+                
+                name = trade['name']
+                signal_type = trade['signal']
+                entry = trade['entry']
+                sl = trade['sl']
+                tp = trade['tp']
+                row_num = trade['row']
+                
                 result = None
                 pnl = 0
                 exit_price = price
+                
+                # BUY Signal
                 if signal_type == "BUY":
-                    pnl = price - entry
-                    if price >= tp: result, exit_price, pnl = "✅ WIN TP", tp, tp - entry; bot_status['wins'] += 1
-                    elif price <= sl: result, exit_price, pnl = "❌ LOSS SL", sl, sl - entry; bot_status['losses'] += 1
+                    if price >= tp:
+                        # TP Hit
+                        result = "✅ WIN TP"
+                        exit_price = tp
+                        pnl = tp - entry
+                        bot_status['wins'] += 1
+                        print(f"  ✅ {name} BUY: Price {price:.2f} >= TP {tp:.2f}")
+                    elif price <= sl:
+                        # SL Hit
+                        result = "❌ LOSS SL"
+                        exit_price = sl
+                        pnl = sl - entry
+                        bot_status['losses'] += 1
+                        print(f"  ❌ {name} BUY: Price {price:.2f} <= SL {sl:.2f}")
+                
+                # SELL Signal
                 elif signal_type == "SELL":
-                    pnl = entry - price
-                    if price <= tp: result, exit_price, pnl = "✅ WIN TP", tp, entry - tp; bot_status['wins'] += 1
-                    elif price >= sl: result, exit_price, pnl = "❌ LOSS SL", sl, entry - sl; bot_status['losses'] += 1
+                    if price <= tp:
+                        # TP Hit
+                        result = "✅ WIN TP"
+                        exit_price = tp
+                        pnl = entry - tp
+                        bot_status['wins'] += 1
+                        print(f"  ✅ {name} SELL: Price {price:.2f} <= TP {tp:.2f}")
+                    elif price >= sl:
+                        # SL Hit
+                        result = "❌ LOSS SL"
+                        exit_price = sl
+                        pnl = entry - sl
+                        bot_status['losses'] += 1
+                        print(f"  ❌ {name} SELL: Price {price:.2f} >= SL {sl:.2f}")
+                
+                # Trade closed
                 if result:
-                    send_telegram(f"📊 {name}\n{signal_type} | Entry: {entry:.2f} | Exit: {exit_price:.2f}\nP&L: {pnl:+.2f}\n{result}\n{get_ist_time()}")
+                    print(f"✅ Trade closed: {name} | {signal_type} | Exit: {exit_price:.2f} | P&L: {pnl:+.2f} | {result}")
+                    
+                    # Send Telegram alert
+                    send_telegram(f"📊 <b>Trade CLOSED</b>\n━━━━━━━━━━━━\n{result}\n\n<b>{name}</b>\n{signal_type} | Entry: {entry:.2f} | Exit: {exit_price:.2f}\nP&L: {pnl:+.2f} pts\n\n{get_ist_time()}")
+                    
+                    # Update Google Sheets
                     update_gsheet_close(row_num, exit_price, pnl, result)
+                    
+                    # Remove from active trades
                     with active_trades_lock:
-                        active_trades.pop(symbol, None); bot_status['active_trades'] = len(active_trades)
-                    print(f"✅ {name} {result}")
-                time.sleep(3)
+                        active_trades.pop(symbol, None)
+                        bot_status['active_trades'] = len(active_trades)
+                
+                time.sleep(5)
+        
         except Exception as e:
-            print(f"❌ Monitor: {e}")
-        time.sleep(60)
+            print(f"❌ Monitor error: {e}")
+        
+        time.sleep(30)
 
 def scan_stock(stock):
     symbol, name = stock['symbol'], stock['name']

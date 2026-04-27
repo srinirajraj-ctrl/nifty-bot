@@ -41,6 +41,7 @@ STOCKS = [
 
 INTERVAL = "5m"
 ATR_MULTIPLIER = 0.35
+SL_BUFFER = 0.20
 TRADE_START = "09:15"
 TRADE_END = "15:15"
 
@@ -75,31 +76,33 @@ def log_to_gsheet(stock_name, signal_type, entry, daily_atr, threshold, opening_
     try:
         ist = pytz.timezone('Asia/Kolkata')
         now = datetime.now(ist)
+        
+        # A-V columns
         row_data = [
-            now.strftime("%d-%b-%Y"),
-            now.strftime("%I:%M %p"),
-            stock_name,
-            signal_type,
-            round(entry, 2),
-            round(daily_atr, 2),
-            round(threshold, 2),
-            round(opening_range, 2),
-            "YES" if opening_range >= threshold else "NO",
-            round(box_high, 2),
-            round(box_low, 2),
-            round(box_mid, 2),
-            pattern,
-            round(sl, 2),
-            round(tp1, 2),
-            round(tp2, 2),
-            "",
-            "",
-            "",
-            "",
-            "",
-            "MONITORING",
-            ""
+            now.strftime("%d-%b-%Y"),                          # A: Date
+            now.strftime("%I:%M %p"),                          # B: Time
+            stock_name,                                         # C: Stock
+            signal_type,                                        # D: Signal
+            round(entry, 2),                                    # E: Entry
+            round(daily_atr, 2),                                # F: Daily ATR
+            round(threshold, 2),                                # G: Threshold (ATR×0.35)
+            round(opening_range, 2),                            # H: Opening Range
+            "YES" if opening_range >= threshold else "NO",     # I: Qualified?
+            round(box_high, 2),                                 # J: Box High
+            round(box_low, 2),                                  # K: Box Low
+            round(box_mid, 2),                                  # L: Box Mid
+            pattern,                                            # M: Pattern
+            round(sl, 2),                                       # N: SL
+            round(tp1, 2),                                      # O: TP1 (Midpoint)
+            round(tp2, 2),                                      # P: TP2 (Opposite)
+            "",                                                 # Q: Exit Price TP1
+            "",                                                 # R: P&L TP1
+            "",                                                 # S: Exit Price TP2
+            "",                                                 # T: P&L TP2
+            "",                                                 # U: Total P&L
+            "MONITORING",                                       # V: Result
         ]
+        
         gsheet_ws.append_row(row_data)
         all_rows = gsheet_ws.get_all_values()
         row_num = len(all_rows)
@@ -109,17 +112,20 @@ def log_to_gsheet(stock_name, signal_type, entry, daily_atr, threshold, opening_
         print(f"❌ Log error: {e}")
         return None
 
-def update_gsheet_close(row_num, exit_tp1, exit_tp2, pnl_tp1, pnl_tp2, total_pnl, result):
+def update_gsheet_close(row_num, exit_tp1, pnl_tp1, exit_tp2, pnl_tp2, total_pnl, result):
     global gsheet_ws
     if not gsheet_ws or not row_num:
         return
     try:
-        gsheet_ws.update_cell(row_num, 17, round(exit_tp1, 2) if exit_tp1 else "")
-        gsheet_ws.update_cell(row_num, 18, round(pnl_tp1, 2) if pnl_tp1 else "")
-        gsheet_ws.update_cell(row_num, 19, round(exit_tp2, 2) if exit_tp2 else "")
-        gsheet_ws.update_cell(row_num, 20, round(pnl_tp2, 2) if pnl_tp2 else "")
-        gsheet_ws.update_cell(row_num, 21, round(total_pnl, 2) if total_pnl else "")
-        gsheet_ws.update_cell(row_num, 22, result)
+        if exit_tp1:
+            gsheet_ws.update_cell(row_num, 17, round(exit_tp1, 2))  # Q: Exit Price TP1
+            gsheet_ws.update_cell(row_num, 18, round(pnl_tp1, 2))   # R: P&L TP1
+        if exit_tp2:
+            gsheet_ws.update_cell(row_num, 19, round(exit_tp2, 2))  # S: Exit Price TP2
+            gsheet_ws.update_cell(row_num, 20, round(pnl_tp2, 2))   # T: P&L TP2
+        if total_pnl:
+            gsheet_ws.update_cell(row_num, 21, round(total_pnl, 2)) # U: Total P&L
+        gsheet_ws.update_cell(row_num, 22, result)                  # V: Result
         print(f"✅ Updated row {row_num}: {result}")
     except Exception as e:
         print(f"❌ Update error: {e}")
@@ -156,7 +162,7 @@ class BotHandler(BaseHTTPRequestHandler):
         win_rate = round(bot_status['wins'] / total * 100, 1) if total > 0 else 0
         with active_trades_lock:
             active_list = "".join([f"<li>{t['name']} {t['signal']}</li>" for t in active_trades.values()]) or "<li>None</li>"
-        html = f"""<html><head><title>Manipulation Box Reversal Bot</title><meta http-equiv="refresh" content="30"><style>body{{font-family:Arial;padding:20px;background:#1a1a2e;color:#eee}}h1{{color:#00d4aa}}.card{{background:#16213e;padding:15px;border-radius:10px;margin:10px 0}}.green{{color:#00ff88}}.red{{color:#ff4444}}</style></head><body><h1>Manipulation Box Strategy</h1><div class="card"><p>ATR × 0.35 Qualification</p><p>Box HIGH/LOW/MID Setup</p><p>Reversal Pattern Entry</p><p>TP1 (Midpoint) & TP2 (Opposite)</p></div><div class="card"><p>Last Check: {bot_status['last_check']}</p><p class="green">Wins: {bot_status['wins']}</p><p class="red">Losses: {bot_status['losses']}</p><p>Win Rate: {win_rate}%</p></div><div class="card"><p>Active: {len(active_trades)}</p><ul>{active_list}</ul></div></body></html>"""
+        html = f"""<html><head><title>Manipulation Box Reversal Bot</title><meta http-equiv="refresh" content="30"><style>body{{font-family:Arial;padding:20px;background:#1a1a2e;color:#eee}}h1{{color:#00d4aa}}.card{{background:#16213e;padding:15px;border-radius:10px;margin:10px 0}}.green{{color:#00ff88}}.red{{color:#ff4444}}</style></head><body><h1>Manipulation Box Strategy</h1><div class="card"><p>ATR × 0.35 Qualification</p><p>Box HIGH/LOW/MID Setup</p><p>Reversal Pattern at Box</p><p>TP1 (Mid) & TP2 (Opposite)</p></div><div class="card"><p>Last Check: {bot_status['last_check']}</p><p class="green">Wins: {bot_status['wins']}</p><p class="red">Losses: {bot_status['losses']}</p><p>Win Rate: {win_rate}%</p></div><div class="card"><p>Active: {len(active_trades)}</p><ul>{active_list}</ul></div></body></html>"""
         self.wfile.write(html.encode())
     def log_message(self, format, *args): pass
 
@@ -205,54 +211,141 @@ def check_manipulation_box(symbol, df_5m, daily_atr):
             'threshold': threshold,
             'box_high': box_high,
             'box_low': box_low,
-            'box_mid': box_mid
+            'box_mid': box_mid,
+            'box_range': opening_range
         }
     except: return None
 
-def detect_reversal_pattern(df_5m):
+def detect_reversal_at_box(df_5m, box_high, box_low):
+    """Detect reversal pattern AT box levels (candle 4+)"""
     if len(df_5m) < 4: return None
     try:
-        c1, c2 = df_5m.iloc[0], df_5m.iloc[1]
-        c4 = df_5m.iloc[-1]
-        if (c1['Close'] < c1['Open'] and c2['Close'] > c2['Open'] and c2['High'] > c1['High'] and c2['Low'] < c1['Low']): return "BULLISH_ENGULFING"
-        if (c1['Close'] > c1['Open'] and c2['Close'] < c2['Open'] and c2['High'] > c1['High'] and c2['Low'] < c1['Low']): return "BEARISH_ENGULFING"
-        if (c1['Close'] < c1['Open'] and c2['Close'] > c2['Open'] and c2['High'] < c1['High'] and c2['Low'] > c1['Low']): return "BULLISH_HARAMI"
-        if (c1['Close'] > c1['Open'] and c2['Close'] < c2['Open'] and c2['High'] < c1['High'] and c2['Low'] > c1['Low']): return "BEARISH_HARAMI"
-        c4_range = c4['High'] - c4['Low']
-        if c4_range > 0:
-            upper_wick = (c4['High'] - max(c4['Open'], c4['Close'])) / c4_range
-            if upper_wick > 0.5 and c4['Close'] < c4['Open']: return "WICK_REJECTION_DOWN"
-            lower_wick = (min(c4['Open'], c4['Close']) - c4['Low']) / c4_range
-            if lower_wick > 0.5 and c4['Close'] > c4['Open']: return "WICK_REJECTION_UP"
+        # Check candles 4 onwards (index 3+)
+        for i in range(3, min(len(df_5m), 10)):  # Check up to candle 10
+            candle = df_5m.iloc[i]
+            candle_high = float(candle['High'])
+            candle_low = float(candle['Low'])
+            candle_close = float(candle['Close'])
+            candle_open = float(candle['Open'])
+            
+            # Check if candle touches box levels
+            touches_high = candle_high >= (box_high * 0.98)  # Within 2% of box high
+            touches_low = candle_low <= (box_low * 1.02)     # Within 2% of box low
+            
+            if touches_high:
+                # Wick rejection at high
+                wick_size = candle_high - max(candle_open, candle_close)
+                candle_range = candle_high - candle_low
+                if candle_range > 0 and wick_size / candle_range > 0.5:
+                    if candle_close < candle_open:  # Closes lower = reversal down
+                        return "WICK_REJECTION_DOWN", i
+                # Bearish engulfing at high
+                if i > 0:
+                    prev = df_5m.iloc[i-1]
+                    if candle_open > prev['Close'] and candle_close < prev['Open']:
+                        return "BEARISH_ENGULFING_AT_HIGH", i
+            
+            if touches_low:
+                # Wick rejection at low
+                wick_size = min(candle_open, candle_close) - candle_low
+                candle_range = candle_high - candle_low
+                if candle_range > 0 and wick_size / candle_range > 0.5:
+                    if candle_close > candle_open:  # Closes higher = reversal up
+                        return "WICK_REJECTION_UP", i
+                # Bullish engulfing at low
+                if i > 0:
+                    prev = df_5m.iloc[i-1]
+                    if candle_open < prev['Close'] and candle_close > prev['Open']:
+                        return "BULLISH_ENGULFING_AT_LOW", i
+        
         return None
     except: return None
 
-def generate_signal(df_5m, box_data, pattern):
-    if not box_data or not box_data['qualified'] or pattern is None: return None
-    current = float(df_5m.iloc[-1]['Close'])
+def generate_signal(df_5m, box_data, pattern_info):
+    if not box_data or not box_data['qualified'] or pattern_info is None: 
+        return None
+    
+    pattern, candle_idx = pattern_info
+    candle = df_5m.iloc[candle_idx]
+    entry = float(candle['Close'])  # Entry at reversal candle close
+    
     box_high = box_data['box_high']
     box_low = box_data['box_low']
     box_mid = box_data['box_mid']
-    if "BULLISH" in pattern or "WICK_REJECTION_UP" in pattern:
-        return {'type': 'BUY', 'entry': current, 'pattern': pattern, 'box_high': box_high, 'box_low': box_low, 'box_mid': box_mid}
-    if "BEARISH" in pattern or "WICK_REJECTION_DOWN" in pattern:
-        return {'type': 'SELL', 'entry': current, 'pattern': pattern, 'box_high': box_high, 'box_low': box_low, 'box_mid': box_mid}
+    box_range = box_data['box_range']
+    
+    if "UP" in pattern or "BULLISH" in pattern:
+        # BUY signal
+        sl = box_low - (box_range * SL_BUFFER)
+        return {
+            'type': 'BUY',
+            'entry': entry,
+            'pattern': pattern,
+            'sl': sl,
+            'tp1': box_mid,
+            'tp2': box_high,
+            'box_high': box_high,
+            'box_low': box_low,
+            'box_mid': box_mid
+        }
+    elif "DOWN" in pattern or "BEARISH" in pattern:
+        # SELL signal
+        sl = box_high + (box_range * SL_BUFFER)
+        return {
+            'type': 'SELL',
+            'entry': entry,
+            'pattern': pattern,
+            'sl': sl,
+            'tp1': box_mid,
+            'tp2': box_low,
+            'box_high': box_high,
+            'box_low': box_low,
+            'box_mid': box_mid
+        }
     return None
 
-def alert_signal(stock, box_data, pattern, signal, daily_atr, threshold):
+def alert_signal(stock, box_data, signal, daily_atr, threshold):
     bot_status['last_signal'] = f"{signal['type']} {stock['name']}"
     bot_status['total_signals'] += 1
     emoji = "🟢" if signal['type'] == "BUY" else "🔴"
     entry = signal['entry']
-    sl = signal['box_high'] + (signal['box_high'] - signal['box_low']) * 0.1 if signal['type'] == "SELL" else signal['box_low'] - (signal['box_high'] - signal['box_low']) * 0.1
-    tp1 = signal['box_mid']
-    tp2 = signal['box_low'] if signal['type'] == "SELL" else signal['box_high']
-    box_range = signal['box_high'] - signal['box_low']
+    tp1 = signal['tp1']
+    tp2 = signal['tp2']
+    sl = signal['sl']
+    
     chart_url = f"https://www.tradingview.com/chart/?symbol={stock['tv']}&interval=5"
-    send_telegram(f"{emoji} <b>{signal['type']} {stock['name']}</b>\n\n📍 Entry: {entry:.2f}\n📦 Box HIGH: {signal['box_high']:.2f}\n📦 Box MID (TP1): {tp1:.2f}\n📦 Box LOW: {signal['box_low']:.2f}\n📦 Box Range: {box_range:.2f}\n🛡 SL: {sl:.2f}\n🎯 TP2: {tp2:.2f}\n📊 Pattern: {pattern}\n\n📊 <a href='{chart_url}'>Open TradingView Chart</a>\n\n{get_ist_time()}")
-    row_num = log_to_gsheet(stock['name'], signal['type'], entry, daily_atr, threshold, box_data['opening_range'], signal['box_high'], signal['box_low'], tp1, pattern, sl, tp1, tp2)
+    
+    send_telegram(
+        f"{emoji} <b>{signal['type']} {stock['name']}</b>\n\n"
+        f"📍 Entry: {entry:.2f}\n"
+        f"🛡 SL: {sl:.2f}\n"
+        f"🎯 TP1 (Mid): {tp1:.2f}\n"
+        f"🎯 TP2 (Opposite): {tp2:.2f}\n"
+        f"📊 Pattern: {signal['pattern']}\n"
+        f"📦 Box Range: {box_data['box_range']:.2f}\n\n"
+        f"📊 <a href='{chart_url}'>Open TradingView Chart</a>\n\n"
+        f"{get_ist_time()}"
+    )
+    
+    row_num = log_to_gsheet(
+        stock['name'], signal['type'], entry, daily_atr, threshold,
+        box_data['opening_range'], signal['box_high'], signal['box_low'],
+        signal['box_mid'], signal['pattern'], sl, tp1, tp2
+    )
+    
     with active_trades_lock:
-        active_trades[stock['symbol']] = {"name": stock['name'], "signal": signal['type'], "entry": entry, "sl": sl, "tp1": tp1, "tp2": tp2, "row": row_num, "symbol": stock['symbol']}
+        active_trades[stock['symbol']] = {
+            "name": stock['name'],
+            "signal": signal['type'],
+            "entry": entry,
+            "sl": sl,
+            "tp1": tp1,
+            "tp2": tp2,
+            "row": row_num,
+            "symbol": stock['symbol'],
+            "tp1_hit": False,
+            "tp2_hit": False
+        }
         bot_status['active_trades'] = len(active_trades)
 
 def is_trading_time():
@@ -320,26 +413,75 @@ def monitor_trades():
                 with active_trades_lock:
                     if symbol not in active_trades: continue
                     trade = active_trades[symbol].copy()
+                
                 price = get_current_price(symbol)
                 if price is None: continue
-                name, signal_type, entry, sl, tp1, tp2, row_num = trade['name'], trade['signal'], trade['entry'], trade['sl'], trade['tp1'], trade['tp2'], trade['row']
+                
+                name = trade['name']
+                signal_type = trade['signal']
+                entry = trade['entry']
+                sl = trade['sl']
+                tp1 = trade['tp1']
+                tp2 = trade['tp2']
+                row_num = trade['row']
+                tp1_hit = trade['tp1_hit']
+                tp2_hit = trade['tp2_hit']
+                
+                exit_tp1, pnl_tp1 = None, None
+                exit_tp2, pnl_tp2 = None, None
                 result = None
-                exit_tp1, exit_tp2, pnl_tp1, pnl_tp2, total_pnl = None, None, None, None, None
+                
                 if signal_type == "BUY":
-                    if price >= tp1 and not exit_tp1: exit_tp1, pnl_tp1 = tp1, tp1 - entry
-                    if price >= tp2: exit_tp2, pnl_tp2, result = tp2, tp2 - entry, "✅ WIN TP2"; bot_status['wins'] += 1
-                    elif price <= sl: result = "❌ LOSS SL"; bot_status['losses'] += 1
+                    if price >= tp1 and not tp1_hit:
+                        exit_tp1, pnl_tp1 = tp1, tp1 - entry
+                        with active_trades_lock:
+                            if symbol in active_trades:
+                                active_trades[symbol]['tp1_hit'] = True
+                    
+                    if price >= tp2 and not tp2_hit:
+                        exit_tp2, pnl_tp2 = tp2, tp2 - entry
+                        total_pnl = (pnl_tp1 or 0) + pnl_tp2
+                        result = "✅ WIN TP2"
+                        bot_status['wins'] += 1
+                    
+                    elif price <= sl:
+                        result = "❌ LOSS SL"
+                        bot_status['losses'] += 1
+                
                 elif signal_type == "SELL":
-                    if price <= tp1 and not exit_tp1: exit_tp1, pnl_tp1 = tp1, entry - tp1
-                    if price <= tp2: exit_tp2, pnl_tp2, result = tp2, entry - tp2, "✅ WIN TP2"; bot_status['wins'] += 1
-                    elif price >= sl: result = "❌ LOSS SL"; bot_status['losses'] += 1
+                    if price <= tp1 and not tp1_hit:
+                        exit_tp1, pnl_tp1 = tp1, entry - tp1
+                        with active_trades_lock:
+                            if symbol in active_trades:
+                                active_trades[symbol]['tp1_hit'] = True
+                    
+                    if price <= tp2 and not tp2_hit:
+                        exit_tp2, pnl_tp2 = tp2, entry - tp2
+                        total_pnl = (pnl_tp1 or 0) + pnl_tp2
+                        result = "✅ WIN TP2"
+                        bot_status['wins'] += 1
+                    
+                    elif price >= sl:
+                        result = "❌ LOSS SL"
+                        bot_status['losses'] += 1
+                
                 if result:
                     total_pnl = (pnl_tp1 or 0) + (pnl_tp2 or 0)
-                    send_telegram(f"📊 {name} {signal_type}\nEntry: {entry:.2f} | TP1: {exit_tp1 or 'pending':.2f if exit_tp1 else 'N/A'} | TP2: {exit_tp2 or 'N/A':.2f if exit_tp2 else 'N/A'}\nTotal P&L: {total_pnl:+.2f}\n{result}\n{get_ist_time()}")
-                    update_gsheet_close(row_num, exit_tp1, exit_tp2, pnl_tp1, pnl_tp2, total_pnl, result)
+                    send_telegram(
+                        f"📊 <b>{name}</b>\n"
+                        f"{signal_type} | Entry: {entry:.2f}\n"
+                        f"TP1: {exit_tp1 or 'N/A':.2f if exit_tp1 else 'N/A'} | P&L: {pnl_tp1 or 0:+.2f}\n"
+                        f"TP2: {exit_tp2 or 'N/A':.2f if exit_tp2 else 'N/A'} | P&L: {pnl_tp2 or 0:+.2f}\n"
+                        f"Total P&L: {total_pnl:+.2f}\n"
+                        f"{result}\n"
+                        f"{get_ist_time()}"
+                    )
+                    update_gsheet_close(row_num, exit_tp1, pnl_tp1, exit_tp2, pnl_tp2, total_pnl, result)
                     with active_trades_lock:
-                        active_trades.pop(symbol, None); bot_status['active_trades'] = len(active_trades)
+                        active_trades.pop(symbol, None)
+                        bot_status['active_trades'] = len(active_trades)
                     print(f"✅ {name} {result}")
+                
                 time.sleep(5)
         except Exception as e:
             print(f"❌ Monitor: {e}")
@@ -350,23 +492,34 @@ def scan_stock(stock):
     try:
         with active_trades_lock:
             if symbol in active_trades: return
+        
         daily_atr = get_daily_atr(symbol)
         if daily_atr is None: return
+        
         df_5m = fetch_intraday(symbol)
         if df_5m is None: return
+        
         box_data = check_manipulation_box(symbol, df_5m, daily_atr)
         if box_data is None or not box_data['qualified']: return
-        print(f"  {name}: Box Range {box_data['opening_range']:.2f} >= Threshold {box_data['threshold']:.2f} ✅")
-        pattern = detect_reversal_pattern(df_5m)
-        if pattern is None: return
-        print(f"  ✅ {name}: Pattern={pattern}")
-        signal = generate_signal(df_5m, box_data, pattern)
+        
+        print(f"  {name}: Box Range {box_data['opening_range']:.2f} >= {box_data['threshold']:.2f} ✅")
+        
+        pattern_info = detect_reversal_at_box(df_5m, box_data['box_high'], box_data['box_low'])
+        if pattern_info is None: return
+        
+        pattern, idx = pattern_info
+        print(f"  ✅ {name}: Pattern={pattern} at candle {idx+1}")
+        
+        signal = generate_signal(df_5m, box_data, pattern_info)
         if signal is None: return
+        
         alert_key = f"{symbol}_{datetime.now().strftime('%H:%M')}"
         if alert_key in alert_history: return
+        
         print(f"  ✅ SIGNAL: {signal['type']} {name}")
-        alert_signal(stock, box_data, pattern, signal, daily_atr, box_data['threshold'])
+        alert_signal(stock, box_data, signal, daily_atr, box_data['threshold'])
         alert_history[alert_key] = True
+        
         if len(alert_history) > 100:
             oldest_key = next(iter(alert_history))
             del alert_history[oldest_key]
@@ -387,7 +540,7 @@ def run_strategy():
 
 def bot_loop():
     print("🚀 Manipulation Box Reversal Bot starting...")
-    send_telegram("🎯 Manipulation Box Bot Started!\n\n✅ ATR × 0.35 Qualification\n✅ Box HIGH/LOW/MID Setup\n✅ Reversal Pattern Detection\n✅ TP1 (Midpoint) & TP2 (Opposite)\n\n" + get_ist_time())
+    send_telegram("🎯 Manipulation Box Bot Started!\n\n✅ ATR × 0.35 Qualification\n✅ Box HIGH/LOW/MID\n✅ Reversal at Box Levels\n✅ TP1 (Mid) & TP2 (Opposite)\n✅ Proper SL Management\n\n" + get_ist_time())
     while True:
         try:
             run_strategy()

@@ -40,7 +40,7 @@ STOCKS = [
 ]
 
 INTERVAL = "5m"
-ATR_MULTIPLIER = 0.35
+ATR_MULTIPLIER = 0.20  # 20% qualification threshold
 SL_BUFFER = 0.20
 TRADE_START = "09:15"
 TRADE_END = "15:15"
@@ -77,30 +77,24 @@ def log_to_gsheet(stock_name, signal_type, entry, daily_atr, threshold, opening_
         ist = pytz.timezone('Asia/Kolkata')
         now = datetime.now(ist)
         
-        # A-V columns
+        # 16 columns (A-P): Separated TP1 and TP2
         row_data = [
             now.strftime("%d-%b-%Y"),                          # A: Date
             now.strftime("%I:%M %p"),                          # B: Time
             stock_name,                                         # C: Stock
             signal_type,                                        # D: Signal
             round(entry, 2),                                    # E: Entry
-            round(daily_atr, 2),                                # F: Daily ATR
-            round(threshold, 2),                                # G: Threshold (ATR×0.35)
-            round(opening_range, 2),                            # H: Opening Range
-            "YES" if opening_range >= threshold else "NO",     # I: Qualified?
-            round(box_high, 2),                                 # J: Box High
-            round(box_low, 2),                                  # K: Box Low
-            round(box_mid, 2),                                  # L: Box Mid
-            pattern,                                            # M: Pattern
-            round(sl, 2),                                       # N: SL
-            round(tp1, 2),                                      # O: TP1 (Midpoint)
-            round(tp2, 2),                                      # P: TP2 (Opposite)
-            "",                                                 # Q: Exit Price TP1
-            "",                                                 # R: P&L TP1
-            "",                                                 # S: Exit Price TP2
-            "",                                                 # T: P&L TP2
-            "",                                                 # U: Total P&L
-            "MONITORING",                                       # V: Result
+            round(daily_atr, 2),                                # F: ATR Threshold
+            round(opening_range, 2),                            # G: Opening Range
+            "YES" if opening_range >= threshold else "NO",     # H: Manipulated?
+            pattern,                                            # I: Pattern
+            round(sl, 2),                                       # J: SL
+            round(tp1, 2),                                      # K: TP1 (Midpoint)
+            round(tp2, 2),                                      # L: TP2 (Opposite)
+            "",                                                 # M: Exit Price
+            "",                                                 # N: P&L
+            "MONITORING",                                       # O: Result
+            "",                                                 # P: Notes
         ]
         
         gsheet_ws.append_row(row_data)
@@ -407,6 +401,57 @@ def get_current_price(symbol):
 def monitor_trades():
     while True:
         try:
+            # Check if it's market close time (3:15 PM)
+            ist = pytz.timezone('Asia/Kolkata')
+            now = datetime.now(ist)
+            
+            if now.weekday() < 5:  # Trading day
+                close_time = now.replace(hour=15, minute=15, second=0, microsecond=0)
+                if now >= close_time:
+                    # Market closed - auto-close all remaining trades
+                    with active_trades_lock:
+                        symbols = list(active_trades.keys())
+                    
+                    for symbol in symbols:
+                        with active_trades_lock:
+                            if symbol not in active_trades:
+                                continue
+                            trade = active_trades[symbol].copy()
+                        
+                        price = get_current_price(symbol)
+                        if price is None:
+                            continue
+                        
+                        name = trade['name']
+                        signal_type = trade['signal']
+                        entry = trade['entry']
+                        row_num = trade['row']
+                        exit_price = price
+                        
+                        if signal_type == "BUY":
+                            pnl = exit_price - entry
+                        else:
+                            pnl = entry - exit_price
+                        
+                        result = "CLOSED AT MARKET CLOSE"
+                        
+                        send_telegram(
+                            f"📊 <b>MARKET CLOSE - AUTO-CLOSED</b>\n"
+                            f"{name} {signal_type}\n"
+                            f"Entry: {entry:.2f} | Exit: {exit_price:.2f}\n"
+                            f"P&L: {pnl:+.2f}\n{result}\n{get_ist_time()}"
+                        )
+                        
+                        try:
+                            gsheet_ws.update_cell(row_num, 12, round(exit_price, 2))
+                            gsheet_ws.update_cell(row_num, 13, round(pnl, 2))
+                            gsheet_ws.update_cell(row_num, 14, result)
+                        except: pass
+                        
+                        with active_trades_lock:
+                            active_trades.pop(symbol, None)
+                            bot_status['active_trades'] = len(active_trades)
+            
             with active_trades_lock:
                 symbols = list(active_trades.keys())
             for symbol in symbols:

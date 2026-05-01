@@ -1,8 +1,7 @@
 #!/usr/bin/env python3
 """
-BOX REVERSAL STRATEGY - COMPLETE PRODUCTION VERSION
-yfinance data + Google Sheets API (gspread) integration
-Proper row-wise logging with row number tracking
+BOX REVERSAL STRATEGY - FIXED PRODUCTION VERSION
+Handles yfinance rate limiting and data format issues
 """
 
 import yfinance as yf
@@ -13,7 +12,6 @@ from datetime import datetime, timedelta
 import requests
 import json
 import os
-from threading import Thread
 import time
 import base64
 
@@ -24,7 +22,6 @@ import base64
 def setup_google_sheets():
     """Initialize Google Sheets connection"""
     try:
-        # Get credentials from environment variable
         creds_json = os.getenv('GOOGLE_CREDS_JSON')
         sheet_id = os.getenv('GOOGLE_SHEET_ID')
         
@@ -32,18 +29,14 @@ def setup_google_sheets():
             print("ERROR: GOOGLE_CREDS_JSON or GOOGLE_SHEET_ID not set")
             return None, None
         
-        # Decode if base64
         try:
             creds_dict = json.loads(base64.b64decode(creds_json))
         except:
             creds_dict = json.loads(creds_json)
         
-        # Authenticate
         scope = ['https://www.googleapis.com/auth/spreadsheets']
         creds = Credentials.from_service_account_info(creds_dict, scopes=scope)
         client = gspread.authorize(creds)
-        
-        # Open sheet
         sheet = client.open_by_key(sheet_id).sheet1
         
         print("✅ Google Sheets connected")
@@ -62,23 +55,12 @@ SHEET, SHEET_ID = setup_google_sheets()
 TELEGRAM_BOT_TOKEN = os.getenv('TELEGRAM_BOT_TOKEN')
 TELEGRAM_CHAT_ID = os.getenv('TELEGRAM_CHAT_ID')
 
-# NSE Stocks to trade
 STOCKS = [
-    'NIFTY 50',
-    'BANK NIFTY',
-    'SBIN',
-    'YES BANK',
-    'PNB',
-    'BANK OF BARODA',
-    'HFCL',
-    'ITI',
-    'NMDC',
-    'HIND COPPER',
-    'INFY',
-    'TCS'
+    'NIFTY 50', 'BANK NIFTY', 'SBIN', 'YES BANK', 'PNB',
+    'BANK OF BARODA', 'HFCL', 'ITI', 'NMDC', 'HIND COPPER',
+    'INFY', 'TCS'
 ]
 
-# yfinance symbol mapping
 SYMBOL_MAP = {
     'NIFTY 50': '^NSEI',
     'BANK NIFTY': '^NSEBANK',
@@ -94,52 +76,37 @@ SYMBOL_MAP = {
     'TCS': 'TCS.NS'
 }
 
-# Track open trades by row number
-OPEN_TRADES = {}  # {row_number: {'symbol': '', 'entry': 0, ...}}
+OPEN_TRADES = {}
 
 # ════════════════════════════════════════════════════════════════════════════
-# GOOGLE SHEETS FUNCTIONS - ROW-WISE LOGGING
+# GOOGLE SHEETS FUNCTIONS
 # ════════════════════════════════════════════════════════════════════════════
 
 def log_signal_to_sheets(date, time, stock, signal, entry, atr_threshold, 
                          opening_range, is_manipulated, pattern, sl, tp1, tp2, notes=''):
-    """
-    Log signal to Google Sheets - ONE ROW ONLY
-    Returns row number for later updates
-    """
+    """Log signal to Google Sheets - ONE ROW ONLY"""
     if not SHEET:
         return None
     
     try:
-        # Create row data - 17 columns (A-Q)
         row_data = [
-            date,                                    # A: Date
-            time,                                    # B: Time
-            stock,                                   # C: Stock
-            signal,                                  # D: Signal
-            round(entry, 2),                        # E: Entry
-            round(atr_threshold, 2),                # F: ATR Threshold
-            round(opening_range, 2),                # G: Opening Range
-            "YES" if is_manipulated else "NO",      # H: Manipulated?
-            pattern,                                 # I: Pattern
-            round(sl, 2),                           # J: SL
-            round(tp1, 2),                          # K: TP1
-            round(tp2, 2),                          # L: TP2
-            "",                                      # M: Exit Price
-            "",                                      # N: P&L
-            "MONITORING",                           # O: Result
-            notes,                                   # P: Notes
-            f'=HYPERLINK("https://www.tradingview.com/?symbol={stock}","View Chart")'  # Q: Chart Link
+            date, time, stock, signal,
+            round(entry, 2),
+            round(atr_threshold, 2),
+            round(opening_range, 2),
+            "YES" if is_manipulated else "NO",
+            pattern,
+            round(sl, 2),
+            round(tp1, 2),
+            round(tp2, 2),
+            "", "", "MONITORING", notes,
+            f'=HYPERLINK("https://www.tradingview.com/?symbol={stock}","View Chart")'
         ]
         
-        # Append ONE complete row
         SHEET.append_row(row_data, table_range='A1')
-        
-        # Get row number (last row in sheet)
         all_values = SHEET.get_all_values()
         row_num = len(all_values)
         
-        # Store trade info for later update
         OPEN_TRADES[row_num] = {
             'symbol': stock,
             'entry': entry,
@@ -157,21 +124,15 @@ def log_signal_to_sheets(date, time, stock, signal, entry, atr_threshold,
         return None
 
 def update_trade_closed_in_sheets(row_num, exit_price, pnl, result):
-    """
-    Update SAME row with exit data
-    Row number tells us exactly which row to update
-    """
+    """Update SAME row with exit data"""
     if not SHEET or not row_num:
         return False
     
     try:
-        # Update specific cells in the same row
-        # M=13: Exit Price, N=14: P&L, O=15: Result
-        SHEET.update_cell(row_num, 13, round(exit_price, 2))  # Column M
-        SHEET.update_cell(row_num, 14, round(pnl, 2))         # Column N
-        SHEET.update_cell(row_num, 15, result)                # Column O
+        SHEET.update_cell(row_num, 13, round(exit_price, 2))
+        SHEET.update_cell(row_num, 14, round(pnl, 2))
+        SHEET.update_cell(row_num, 15, result)
         
-        # Remove from open trades
         if row_num in OPEN_TRADES:
             del OPEN_TRADES[row_num]
         
@@ -183,11 +144,11 @@ def update_trade_closed_in_sheets(row_num, exit_price, pnl, result):
         return False
 
 # ════════════════════════════════════════════════════════════════════════════
-# DATA FETCHING - YFINANCE
+# DATA FETCHING - FIXED FOR RATE LIMITING
 # ════════════════════════════════════════════════════════════════════════════
 
-def get_historical_data(symbol, period='5d', interval='1m'):
-    """Get historical data from Yahoo Finance, convert to 5-minute candles"""
+def get_historical_data(symbol, period='5d', interval='1m', retry=0):
+    """Get historical data from Yahoo Finance with retry logic"""
     try:
         yf_symbol = SYMBOL_MAP.get(symbol)
         if not yf_symbol:
@@ -196,17 +157,24 @@ def get_historical_data(symbol, period='5d', interval='1m'):
         
         print(f"{symbol}: Fetching data...", end=" ")
         
-        # Download 1-minute data
+        # Download with error handling
         df = yf.download(
             yf_symbol,
             period=period,
-            interval='1m',
+            interval=interval,
             progress=False,
-            timeout=10
+            timeout=10,
+            retry=3
         )
         
         if df.empty:
             print("NO DATA")
+            return None
+        
+        # Check if dataframe has required columns
+        required_cols = ['Open', 'High', 'Low', 'Close', 'Volume']
+        if not all(col in df.columns for col in required_cols):
+            print(f"MISSING COLUMNS")
             return None
         
         # Resample to 5-minute candles
@@ -217,6 +185,10 @@ def get_historical_data(symbol, period='5d', interval='1m'):
             'Close': 'last',
             'Volume': 'sum'
         }).dropna()
+        
+        if df_5min.empty:
+            print("NO DATA AFTER RESAMPLE")
+            return None
         
         # Convert to list of dicts
         data = []
@@ -234,8 +206,18 @@ def get_historical_data(symbol, period='5d', interval='1m'):
         return data
     
     except Exception as e:
-        print(f"ERROR: {str(e)[:50]}")
-        return None
+        error_msg = str(e)
+        if 'Too Many Requests' in error_msg or 'Rate limited' in error_msg:
+            print(f"RATE LIMITED - waiting...")
+            if retry < 2:
+                time.sleep(5)
+                return get_historical_data(symbol, period, interval, retry + 1)
+            else:
+                print("RATE LIMITED (max retries)")
+                return None
+        else:
+            print(f"ERROR: {error_msg[:40]}")
+            return None
 
 # ════════════════════════════════════════════════════════════════════════════
 # BOX CALCULATION
@@ -319,25 +301,21 @@ def detect_reversal_pattern(current_candle, previous_candle):
         prev_open = previous_candle['open']
         prev_close = previous_candle['close']
         
-        # WICK REJECTION UP
         if current_low < current_open and current_close > current_open:
             wick_size = (current_close - current_low) / (current_high - current_low + 0.001)
             if wick_size > 0.60:
                 return 'BUY', 'WICK_REJECTION_AT_BOT'
         
-        # WICK REJECTION DOWN
         if current_high > current_open and current_close < current_open:
             wick_size = (current_high - current_close) / (current_high - current_low + 0.001)
             if wick_size > 0.60:
                 return 'SELL', 'WICK_REJECTION_AT_TOP'
         
-        # BULLISH ENGULFING
         if (prev_close < prev_open and 
             current_close > prev_open and 
             current_open < prev_close):
             return 'BUY', 'BULLISH_ENGULFING_AT_BOT'
         
-        # BEARISH ENGULFING
         if (prev_close > prev_open and 
             current_close < prev_open and 
             current_open > prev_close):
@@ -366,7 +344,6 @@ def generate_signal(symbol, today_data, box_high, box_low, is_qualified):
             current_low = current_candle['low']
             current_close = current_candle['close']
             
-            # Check if price AT zone
             at_top_zone, at_bot_zone, top_zone, bot_zone = check_if_at_zone(
                 current_high, current_low, box_high, box_low
             )
@@ -374,7 +351,6 @@ def generate_signal(symbol, today_data, box_high, box_low, is_qualified):
             if not (at_top_zone or at_bot_zone):
                 continue
             
-            # Detect pattern
             signal_type, pattern = detect_reversal_pattern(current_candle, previous_candle)
             
             if signal_type and pattern:
@@ -432,8 +408,6 @@ Pattern: {signal['pattern']}
 Zone: {signal['at_zone']}
 
 Time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S IST')}
-
-Sheet Row: {row_num}
 """
         
         url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
@@ -449,9 +423,9 @@ Sheet Row: {row_num}
 # ════════════════════════════════════════════════════════════════════════════
 
 def main():
-    """Main trading loop with proper Google Sheets integration"""
+    """Main trading loop with error handling"""
     print("\n" + "="*70)
-    print("BOX REVERSAL STRATEGY - COMPLETE PRODUCTION VERSION")
+    print("BOX REVERSAL STRATEGY - FIXED PRODUCTION VERSION")
     print("yfinance data + Google Sheets API integration")
     print("="*70 + "\n")
     
@@ -461,20 +435,22 @@ def main():
     
     signal_count = 0
     
-    for symbol in STOCKS:
+    for idx, symbol in enumerate(STOCKS):
         try:
-            # Get historical data
+            print(f"[{idx+1}/{len(STOCKS)}] {symbol}")
+            
+            # Get historical data with rate limit handling
             historical_data = get_historical_data(symbol)
             
             if not historical_data or len(historical_data) == 0:
-                print(f"  └─ {symbol}: NO DATA\n")
+                print(f"  └─ NO DATA\n")
                 continue
             
             # Calculate box
             box_high, box_low = calculate_box(historical_data)
             
             if not box_high or not box_low:
-                print(f"  └─ {symbol}: Box calculation failed\n")
+                print(f"  └─ Box calculation failed\n")
                 continue
             
             # Get today's data
@@ -486,10 +462,10 @@ def main():
             )
             
             if not is_qualified:
-                print(f"  └─ {symbol}: NOT QUALIFIED\n")
+                print(f"  └─ NOT QUALIFIED\n")
                 continue
             
-            print(f"  └─ {symbol}: QUALIFIED ✅")
+            print(f"  └─ QUALIFIED ✅")
             
             # Generate signal
             signal = generate_signal(symbol, today_data, box_high, box_low, is_qualified)
@@ -497,10 +473,8 @@ def main():
             if signal:
                 signal_count += 1
                 print(f"      ➜ SIGNAL: {signal['signal']} @ {signal['entry']:.2f}")
-                print(f"      ➜ Zone: {signal['at_zone']}")
-                print(f"      ➜ Pattern: {signal['pattern']}")
                 
-                # Log to Google Sheets - GET ROW NUMBER
+                # Log to Google Sheets
                 now = datetime.now()
                 date_str = now.strftime('%d-%b-%Y')
                 time_str = now.strftime('%H:%M %p')
@@ -511,18 +485,23 @@ def main():
                     signal['pattern'], signal['sl'], signal['tp1'], signal['tp2']
                 )
                 
-                # Send Telegram with row number
+                # Send Telegram
                 send_telegram_alert(signal, row_num)
             else:
-                print(f"      ➜ No signal\n")
+                print(f"      ➜ No signal")
+            
+            print()
+            
+            # Add delay between requests to avoid rate limiting
+            if idx < len(STOCKS) - 1:
+                time.sleep(1)
         
         except Exception as e:
-            print(f"  └─ {symbol}: ERROR - {str(e)[:40]}\n")
+            print(f"  └─ ERROR - {str(e)[:40]}\n")
             continue
     
     print("="*70)
     print(f"Trading loop completed! Generated {signal_count} signals")
-    print(f"Open trades: {len(OPEN_TRADES)}")
     print("="*70)
 
 # ════════════════════════════════════════════════════════════════════════════
@@ -536,35 +515,3 @@ if __name__ == "__main__":
         print("\nBot stopped by user")
     except Exception as e:
         print(f"FATAL ERROR: {e}")
-
-"""
-COMPLETE INTEGRATION FEATURES:
-════════════════════════════════
-
-✅ yfinance for real NSE data
-✅ Google Sheets API (gspread) for proper row-wise logging
-✅ Each signal = ONE complete row (A:Q)
-✅ Row number returned and tracked
-✅ Update same row on trade close (never new rows)
-✅ Telegram alerts with row numbers
-✅ No more column-wise pasting
-✅ Professional data management
-✅ Complete error handling
-✅ Ready for 24/7 production trading
-
-ROW-WISE LOGGING:
-═════════════════
-
-Signal logged:
-├─ Row 11: All data columns A-Q in one row
-├─ Returns: row_num = 11
-└─ Stored in OPEN_TRADES[11]
-
-Trade closes:
-├─ update_trade_closed_in_sheets(11, exit_price, pnl, result)
-├─ Updates SAME row 11
-├─ Columns M, N, O only
-└─ Complete trade record in one row!
-
-NEVER creates new rows for the same trade!
-"""

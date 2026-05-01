@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-BOX REVERSAL STRATEGY - FIXED PRODUCTION VERSION
-Handles yfinance rate limiting and data format issues
+BOX REVERSAL STRATEGY - FINAL FIXED PRODUCTION VERSION
+yfinance data + Google Sheets API integration
 """
 
 import yfinance as yf
@@ -144,11 +144,11 @@ def update_trade_closed_in_sheets(row_num, exit_price, pnl, result):
         return False
 
 # ════════════════════════════════════════════════════════════════════════════
-# DATA FETCHING - FIXED FOR RATE LIMITING
+# DATA FETCHING - FIXED FOR yfinance COMPATIBILITY
 # ════════════════════════════════════════════════════════════════════════════
 
-def get_historical_data(symbol, period='5d', interval='1m', retry=0):
-    """Get historical data from Yahoo Finance with retry logic"""
+def get_historical_data(symbol, period='5d', interval='1m'):
+    """Get historical data from Yahoo Finance - FIXED VERSION"""
     try:
         yf_symbol = SYMBOL_MAP.get(symbol)
         if not yf_symbol:
@@ -157,14 +157,12 @@ def get_historical_data(symbol, period='5d', interval='1m', retry=0):
         
         print(f"{symbol}: Fetching data...", end=" ")
         
-        # Download with error handling
+        # Download - ONLY use valid parameters
         df = yf.download(
             yf_symbol,
             period=period,
             interval=interval,
-            progress=False,
-            timeout=10,
-            retry=3
+            progress=False
         )
         
         if df.empty:
@@ -206,18 +204,8 @@ def get_historical_data(symbol, period='5d', interval='1m', retry=0):
         return data
     
     except Exception as e:
-        error_msg = str(e)
-        if 'Too Many Requests' in error_msg or 'Rate limited' in error_msg:
-            print(f"RATE LIMITED - waiting...")
-            if retry < 2:
-                time.sleep(5)
-                return get_historical_data(symbol, period, interval, retry + 1)
-            else:
-                print("RATE LIMITED (max retries)")
-                return None
-        else:
-            print(f"ERROR: {error_msg[:40]}")
-            return None
+        print(f"ERROR: {str(e)[:40]}")
+        return None
 
 # ════════════════════════════════════════════════════════════════════════════
 # BOX CALCULATION
@@ -423,9 +411,9 @@ Time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S IST')}
 # ════════════════════════════════════════════════════════════════════════════
 
 def main():
-    """Main trading loop with error handling"""
+    """Main trading loop"""
     print("\n" + "="*70)
-    print("BOX REVERSAL STRATEGY - FIXED PRODUCTION VERSION")
+    print("BOX REVERSAL STRATEGY - FINAL FIXED PRODUCTION VERSION")
     print("yfinance data + Google Sheets API integration")
     print("="*70 + "\n")
     
@@ -439,24 +427,20 @@ def main():
         try:
             print(f"[{idx+1}/{len(STOCKS)}] {symbol}")
             
-            # Get historical data with rate limit handling
             historical_data = get_historical_data(symbol)
             
             if not historical_data or len(historical_data) == 0:
                 print(f"  └─ NO DATA\n")
                 continue
             
-            # Calculate box
             box_high, box_low = calculate_box(historical_data)
             
             if not box_high or not box_low:
                 print(f"  └─ Box calculation failed\n")
                 continue
             
-            # Get today's data
             today_data = historical_data[-100:]
             
-            # Check qualification
             is_qualified, opening_range, threshold = check_opening_qualification(
                 today_data, box_high, box_low
             )
@@ -467,14 +451,12 @@ def main():
             
             print(f"  └─ QUALIFIED ✅")
             
-            # Generate signal
             signal = generate_signal(symbol, today_data, box_high, box_low, is_qualified)
             
             if signal:
                 signal_count += 1
                 print(f"      ➜ SIGNAL: {signal['signal']} @ {signal['entry']:.2f}")
                 
-                # Log to Google Sheets
                 now = datetime.now()
                 date_str = now.strftime('%d-%b-%Y')
                 time_str = now.strftime('%H:%M %p')
@@ -485,16 +467,12 @@ def main():
                     signal['pattern'], signal['sl'], signal['tp1'], signal['tp2']
                 )
                 
-                # Send Telegram
                 send_telegram_alert(signal, row_num)
             else:
                 print(f"      ➜ No signal")
             
             print()
-            
-            # Add delay between requests to avoid rate limiting
-            if idx < len(STOCKS) - 1:
-                time.sleep(1)
+            time.sleep(1)
         
         except Exception as e:
             print(f"  └─ ERROR - {str(e)[:40]}\n")

@@ -468,7 +468,23 @@ def main():
 
 if __name__ == "__main__":
     try:
-        main()
+        run_count = 0
+        while True:
+            run_count += 1
+            print(f"\n{'='*70}")
+            print(f"RUN #{run_count} - {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+            print(f"{'='*70}\n")
+            
+            main()
+            
+            print(f"\n{'='*70}")
+            print(f"Run #{run_count} completed!")
+            print(f"Next run in 1 hour at {(datetime.now() + timedelta(hours=1)).strftime('%H:%M:%S')}")
+            print(f"{'='*70}\n")
+            
+            # Wait 1 hour before next run
+            time.sleep(3600)
+    
     except KeyboardInterrupt:
         print("\nBot stopped by user")
     except Exception as e:

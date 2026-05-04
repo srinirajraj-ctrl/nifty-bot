@@ -5,3 +5,4 @@ requests
 pytz
 gspread
 google-auth
+flask==3.0.0

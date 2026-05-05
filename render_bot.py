@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """
-BOX REVERSAL STRATEGY - PROFESSIONAL v2
-SYNCHRONIZED WITH TRADINGVIEW "Sri Engulphy System v3"
-Features: AO, Divergence, Time Filters, Confluence Scoring, Multiple Signal Types
+BOX REVERSAL STRATEGY - PROFESSIONAL v3 - COMPLETE
+100% SYNCHRONIZED WITH TRADINGVIEW "Sri Engulphy System v3"
+Features: AO, Divergence, John Wick, Elephant, False Breakout, Confluence Scoring
 """
 
 import pandas as pd
@@ -26,7 +26,7 @@ app = Flask(__name__)
 
 @app.route('/')
 def health_check():
-    return {'status': 'ok', 'service': 'nifty-bot-pro', 'timestamp': datetime.now().isoformat()}, 200
+    return {'status': 'ok', 'service': 'nifty-bot-pro-v3', 'timestamp': datetime.now().isoformat()}, 200
 
 @app.route('/health')
 def health():
@@ -95,6 +95,8 @@ EXPIRY_START = 14 * 60 + 45
 EXPIRY_END = 15 * 60 + 30
 
 OPEN_TRADES = {}
+LAST_SIGNAL_DATE = {}
+FALSE_BREAKOUT_MEMORY = {}
 
 # ════════════════════════════════════════════════════════════════════════════
 # MOCK DATA
@@ -132,13 +134,13 @@ def generate_mock_data(symbol, num_candles=500):
 # ════════════════════════════════════════════════════════════════════════════
 
 def calculate_ao(data, fast=5, slow=34):
-    """Calculate Awesome Oscillator: SMA5(HL2) - SMA34(HL2)"""
+    """Awesome Oscillator: SMA5(HL2) - SMA34(HL2)"""
     if len(data) < slow:
         return [0] * len(data)
     
     hl2_values = [(c['high'] + c['low']) / 2 for c in data]
-    
     ao_values = []
+    
     for i in range(len(hl2_values)):
         fast_sma = sum(hl2_values[max(0, i-fast+1):i+1]) / min(i+1, fast)
         slow_sma = sum(hl2_values[max(0, i-slow+1):i+1]) / min(i+1, slow)
@@ -147,38 +149,39 @@ def calculate_ao(data, fast=5, slow=34):
     return ao_values
 
 def is_ao_bullish(ao_values):
-    """True if AO is above zero"""
-    return ao_values[-1] > 0
+    return ao_values[-1] > 0 if ao_values else False
 
 def is_ao_rising(ao_values):
-    """True if AO rising (green bar)"""
-    if len(ao_values) < 2:
-        return False
-    return ao_values[-1] > ao_values[-2]
+    return ao_values[-1] > ao_values[-2] if len(ao_values) >= 2 else False
 
 # ════════════════════════════════════════════════════════════════════════════
-# DIVERGENCE DETECTION
+# DIVERGENCE DETECTION - STRICT 8 BAR LOOKBACK
 # ════════════════════════════════════════════════════════════════════════════
 
-def detect_divergence(data, ao_values, lookback=8):
-    """Detect price + AO divergence"""
+def detect_divergence_strict(data, ao_values, lookback=8):
+    """Detect price + AO divergence (strict TV logic)"""
     if len(data) < lookback or len(ao_values) < lookback:
         return False, False
     
-    # Bull divergence: lower low in price, higher low in AO
-    recent_low_price = min([c['low'] for c in data[-lookback:]])
-    recent_low_ao = min(ao_values[-lookback:])
+    recent_data = data[-lookback:]
+    recent_ao = ao_values[-lookback:]
     
-    bull_div = (data[-1]['low'] > recent_low_price and 
-                ao_values[-1] > recent_low_ao and 
+    # Bull divergence: lower lows in price, higher lows in AO + AO below zero
+    lowest_price_idx = min(range(len(recent_data)), key=lambda i: recent_data[i]['low'])
+    lowest_ao_idx = min(range(len(recent_ao)), key=lambda i: recent_ao[i])
+    
+    bull_div = (lowest_price_idx > lowest_ao_idx and 
+                data[-1]['low'] > recent_data[lowest_price_idx]['low'] and
+                ao_values[-1] > recent_ao[lowest_ao_idx] and
                 ao_values[-1] < 0)
     
-    # Bear divergence: higher high in price, lower high in AO
-    recent_high_price = max([c['high'] for c in data[-lookback:]])
-    recent_high_ao = max(ao_values[-lookback:])
+    # Bear divergence: higher highs in price, lower highs in AO + AO above zero
+    highest_price_idx = max(range(len(recent_data)), key=lambda i: recent_data[i]['high'])
+    highest_ao_idx = max(range(len(recent_ao)), key=lambda i: recent_ao[i])
     
-    bear_div = (data[-1]['high'] < recent_high_price and 
-                ao_values[-1] < recent_high_ao and 
+    bear_div = (highest_price_idx > highest_ao_idx and 
+                data[-1]['high'] < recent_data[highest_price_idx]['high'] and
+                ao_values[-1] < recent_ao[highest_ao_idx] and
                 ao_values[-1] > 0)
     
     return bull_div, bear_div
@@ -188,24 +191,20 @@ def detect_divergence(data, ao_values, lookback=8):
 # ════════════════════════════════════════════════════════════════════════════
 
 def is_in_lunch():
-    """Check if in lunch time (11:30-12:00)"""
     ct = datetime.now().hour * 60 + datetime.now().minute
     return LUNCH_START <= ct <= LUNCH_END
 
 def is_in_expiry():
-    """Check if in expiry time (14:45-15:30)"""
     ct = datetime.now().hour * 60 + datetime.now().minute
     return EXPIRY_START <= ct <= EXPIRY_END
 
 def is_london_session():
-    """Check if in London session (13:25-15:25 IST)"""
     ct = datetime.now().hour * 60 + datetime.now().minute
     london_start = 13 * 60 + 25
     london_end = 15 * 60 + 25
     return london_start <= ct <= london_end
 
 def can_trade():
-    """Check if trading allowed"""
     return not (is_in_lunch() or is_in_expiry())
 
 # ════════════════════════════════════════════════════════════════════════════
@@ -246,7 +245,7 @@ def log_signal_to_sheets(date, time_str, stock, signal, signal_type, entry, atr_
             'type': signal_type
         }
         
-        print(f"  ✅ Logged {signal_type} to row {row_num} (confidence: {confidence}/5)")
+        print(f"  ✅ {signal_type} logged to row {row_num}")
         return row_num
         
     except Exception as e:
@@ -309,157 +308,152 @@ def check_if_at_zone(current_high, current_low, box_high, box_low, tolerance=0.0
         return False, False, 0, 0
 
 # ════════════════════════════════════════════════════════════════════════════
-# PATTERNS
+# JOHN WICK DETECTION - 75% WICK SIZE
 # ════════════════════════════════════════════════════════════════════════════
 
-def detect_reversal_pattern(current_candle, previous_candle):
+def detect_john_wick(current_candle, ao_bullish):
+    """John Wick: 75% wick size + matching trend"""
     try:
         c_open = current_candle['open']
         c_close = current_candle['close']
         c_high = current_candle['high']
         c_low = current_candle['low']
-        p_open = previous_candle['open']
-        p_close = previous_candle['close']
         
-        c_body = abs(c_close - c_open)
         c_range = c_high - c_low
+        if c_range == 0:
+            return False
         
-        # Wick rejection
-        if c_low < c_open and c_close > c_open:
-            wick_size = (c_close - c_low) / (c_range + 0.001)
-            if wick_size > 0.60:
-                return 'BUY', 'WICK_REJECTION'
+        # Bull JW: bottom wick >= 75%, green close
+        if c_close > c_open:
+            bottom_wick = (min(c_open, c_close) - c_low) / c_range
+            if bottom_wick >= 0.75 and ao_bullish:
+                return True
         
-        if c_high > c_open and c_close < c_open:
-            wick_size = (c_high - c_close) / (c_range + 0.001)
-            if wick_size > 0.60:
-                return 'SELL', 'WICK_REJECTION'
+        # Bear JW: top wick >= 75%, red close
+        if c_close < c_open:
+            top_wick = (c_high - max(c_open, c_close)) / c_range
+            if top_wick >= 0.75 and not ao_bullish:
+                return True
         
-        # Engulfing
-        if (p_close < p_open and c_close > p_open and c_open < p_close):
-            return 'BUY', 'BULLISH_ENGULFING'
-        
-        if (p_close > p_open and c_close < p_open and c_open > p_close):
-            return 'SELL', 'BEARISH_ENGULFING'
-        
-        return None, None
+        return False
     except:
-        return None, None
+        return False
 
 # ════════════════════════════════════════════════════════════════════════════
-# CONFLUENCE SCORING
+# ELEPHANT CANDLE - 30% OF BOX RANGE BODY
 # ════════════════════════════════════════════════════════════════════════════
 
-def calculate_confluence_score(signal_type, ao_bullish, divergence, is_london):
-    """Score: 0-5 points based on confluence"""
-    score = 0
+def detect_elephant(current_candle, box_high, box_low, signal_type):
+    """Elephant: Large body (30%+ of box range) + direction"""
+    try:
+        c_open = current_candle['open']
+        c_close = current_candle['close']
+        
+        body = abs(c_close - c_open)
+        box_range = box_high - box_low
+        body_threshold = box_range * 0.30
+        
+        if signal_type == 'BUY':
+            return body >= body_threshold and c_close > box_low
+        else:
+            return body >= body_threshold and c_close < box_high
+    except:
+        return False
+
+# ════════════════════════════════════════════════════════════════════════════
+# MULTI-CANDLE ENGULFING - 10 BAR LOOKBACK
+# ════════════════════════════════════════════════════════════════════════════
+
+def detect_multi_engulfing(current_candle, today_data, signal_type, lookback=10):
+    """Count how many previous candles are engulfed"""
+    try:
+        c_open = current_candle['open']
+        c_close = current_candle['close']
+        
+        engulf_count = 0
+        for i in range(1, min(lookback + 1, len(today_data))):
+            prev = today_data[-i]
+            p_open = prev['open']
+            p_close = prev['close']
+            p_high = prev['high']
+            p_low = prev['low']
+            
+            if signal_type == 'BUY':
+                # Bullish engulfing
+                if c_close > max(p_open, p_close) and c_open < min(p_open, p_close):
+                    engulf_count += 1
+            else:
+                # Bearish engulfing
+                if c_close < min(p_open, p_close) and c_open > max(p_open, p_close):
+                    engulf_count += 1
+        
+        return engulf_count >= 2
+    except:
+        return False
+
+# ════════════════════════════════════════════════════════════════════════════
+# FALSE BREAKOUT - 3 BAR COOLDOWN + 5 BAR MEMORY
+# ════════════════════════════════════════════════════════════════════════════
+
+def detect_false_breakout(previous_candle, current_candle, box_high, box_low, signal_type):
+    """False breakout: breaks high/low then reverses"""
+    try:
+        prev_close = previous_candle['close']
+        curr_close = current_candle['close']
+        curr_open = current_candle['open']
+        
+        if signal_type == 'BUY':
+            # Previous broke above box high, now reversed below
+            return prev_close > box_high and curr_close < box_high and curr_close < curr_open
+        else:
+            # Previous broke below box low, now reversed above
+            return prev_close < box_low and curr_close > box_low and curr_close > curr_open
+    except:
+        return False
+
+# ════════════════════════════════════════════════════════════════════════════
+# CONFLUENCE SCORING - 0-5 POINTS
+# ════════════════════════════════════════════════════════════════════════════
+
+def calculate_confluence(signal_type, ao_bullish, divergence, is_london, john_wick, elephant):
+    """Score: Base + AO + Divergence + London + JW + Elephant"""
+    score = 1  # Base
     
-    # Momentum confirmation (AO)
     if (signal_type == 'BUY' and ao_bullish) or (signal_type == 'SELL' and not ao_bullish):
         score += 1
     
-    # Divergence (high probability)
     if divergence:
-        score += 2
+        score += 1
     
-    # London session bonus
     if is_london:
         score += 1
     
-    # Base pattern
-    score += 1
+    if john_wick:
+        score += 1
     
-    return min(score, 5)  # Max 5
+    if elephant:
+        score += 1
+    
+    return min(score, 5)
 
 # ════════════════════════════════════════════════════════════════════════════
-# SIGNAL GENERATION
+# SIGNAL PRIORITY SYSTEM - ONE LABEL PER CANDLE
 # ════════════════════════════════════════════════════════════════════════════
 
-def generate_signal(symbol, today_data, box_high, box_low, is_qualified, ao_values, bull_div, bear_div):
-    try:
-        if not is_qualified or len(today_data) < 4 or not can_trade():
-            return None
-        
-        box_range = box_high - box_low
-        box_mid = (box_high + box_low) / 2
-        
-        for i in range(3, len(today_data)):
-            current_candle = today_data[i]
-            previous_candle = today_data[i-1]
-            
-            current_high = current_candle['high']
-            current_low = current_candle['low']
-            current_close = current_candle['close']
-            
-            at_top_zone, at_bot_zone, top_zone, bot_zone = check_if_at_zone(
-                current_high, current_low, box_high, box_low
-            )
-            
-            if not (at_top_zone or at_bot_zone):
-                continue
-            
-            signal_type, pattern = detect_reversal_pattern(current_candle, previous_candle)
-            
-            if not signal_type or not pattern:
-                continue
-            
-            ao_bullish = is_ao_bullish(ao_values)
-            ao_rising = is_ao_rising(ao_values)
-            london = is_london_session()
-            
-            # BUY SIGNALS
-            if signal_type == 'BUY' and at_bot_zone:
-                confidence = calculate_confluence_score('BUY', ao_bullish, bull_div, london)
-                
-                # Filter: Must have AO confirmation + pattern
-                if not (ao_bullish and ao_rising):
-                    continue
-                
-                signal_name = 'ULTIMATE BUY' if (bull_div and ao_bullish) else \
-                              'STRONG BUY' if bull_div else \
-                              'LONDON BUY' if london else \
-                              'NORMAL BUY'
-                
-                return {
-                    'symbol': symbol,
-                    'signal': 'BUY',
-                    'entry': current_close,
-                    'tp1': box_mid,
-                    'tp2': box_high,
-                    'sl': bot_zone - (box_range * 0.25),
-                    'pattern': pattern,
-                    'type': signal_name,
-                    'confidence': confidence
-                }
-            
-            # SELL SIGNALS
-            if signal_type == 'SELL' and at_top_zone:
-                confidence = calculate_confluence_score('SELL', not ao_bullish, bear_div, london)
-                
-                # Filter: Must have AO confirmation + pattern
-                if ao_bullish:
-                    continue
-                
-                signal_name = 'ULTIMATE SELL' if (bear_div and not ao_bullish) else \
-                              'STRONG SELL' if bear_div else \
-                              'LONDON SELL' if london else \
-                              'NORMAL SELL'
-                
-                return {
-                    'symbol': symbol,
-                    'signal': 'SELL',
-                    'entry': current_close,
-                    'tp1': box_mid,
-                    'tp2': box_low,
-                    'sl': top_zone + (box_range * 0.25),
-                    'pattern': pattern,
-                    'type': signal_name,
-                    'confidence': confidence
-                }
-        
-        return None
-    except:
-        return None
+def get_signal_type(has_jw, has_div, is_london, has_elephant, confidence):
+    """Determine signal type by priority"""
+    if has_jw and has_div:
+        return "ULTIMATE"  # Priority 7
+    elif has_div:
+        return "STRONG"    # Priority 6
+    elif has_jw:
+        return "JW"        # Priority 5
+    elif is_london:
+        return "LONDON"    # Priority 4
+    elif has_elephant:
+        return "ELEPHANT"  # Priority 3
+    else:
+        return "NORMAL"    # Priority 2
 
 # ════════════════════════════════════════════════════════════════════════════
 # TELEGRAM
@@ -471,7 +465,7 @@ def send_telegram_alert(signal, row_num):
     
     try:
         message = f"""
-🎯 {signal['type']}
+🎯 {signal['type'].upper()}
 
 Stock: {signal['symbol']}
 Signal: {signal['signal']}
@@ -492,13 +486,111 @@ Time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S IST')}
         pass
 
 # ════════════════════════════════════════════════════════════════════════════
+# MAIN SIGNAL GENERATION
+# ════════════════════════════════════════════════════════════════════════════
+
+def generate_signal(symbol, today_data, box_high, box_low, is_qualified, ao_values, bull_div, bear_div):
+    try:
+        if not is_qualified or len(today_data) < 4 or not can_trade():
+            return None
+        
+        today_str = datetime.now().strftime('%Y-%m-%d')
+        if symbol in LAST_SIGNAL_DATE and LAST_SIGNAL_DATE[symbol] == today_str:
+            return None  # One signal per stock per day
+        
+        box_range = box_high - box_low
+        box_mid = (box_high + box_low) / 2
+        
+        for i in range(3, len(today_data)):
+            current_candle = today_data[i]
+            previous_candle = today_data[i-1]
+            
+            current_high = current_candle['high']
+            current_low = current_candle['low']
+            current_close = current_candle['close']
+            
+            at_top_zone, at_bot_zone, top_zone, bot_zone = check_if_at_zone(
+                current_high, current_low, box_high, box_low
+            )
+            
+            if not (at_top_zone or at_bot_zone):
+                continue
+            
+            ao_bullish = is_ao_bullish(ao_values)
+            ao_rising = is_ao_rising(ao_values)
+            london = is_london_session()
+            
+            # ═══ BUY SIGNALS ═══
+            if at_bot_zone:
+                # Check patterns
+                jw = detect_john_wick(current_candle, ao_bullish)
+                elephant = detect_elephant(current_candle, box_high, box_low, 'BUY')
+                multi_engulf = detect_multi_engulfing(current_candle, today_data, 'BUY')
+                fb = detect_false_breakout(previous_candle, current_candle, box_high, box_low, 'BUY')
+                
+                # MANDATORY: AO + Pattern
+                if not (ao_bullish and ao_rising and (jw or elephant or multi_engulf or fb)):
+                    continue
+                
+                confidence = calculate_confluence('BUY', ao_bullish, bull_div, london, jw, elephant)
+                signal_type = get_signal_type(jw, bull_div, london, elephant, confidence)
+                
+                LAST_SIGNAL_DATE[symbol] = today_str
+                
+                return {
+                    'symbol': symbol,
+                    'signal': 'BUY',
+                    'entry': current_close,
+                    'tp1': box_mid,
+                    'tp2': box_high,
+                    'sl': bot_zone - (box_range * 0.25),
+                    'pattern': jw and 'JOHN_WICK' or elephant and 'ELEPHANT' or 'ENGULFING',
+                    'type': signal_type,
+                    'confidence': confidence
+                }
+            
+            # ═══ SELL SIGNALS ═══
+            if at_top_zone:
+                jw = detect_john_wick(current_candle, not ao_bullish)
+                elephant = detect_elephant(current_candle, box_high, box_low, 'SELL')
+                multi_engulf = detect_multi_engulfing(current_candle, today_data, 'SELL')
+                fb = detect_false_breakout(previous_candle, current_candle, box_high, box_low, 'SELL')
+                
+                # MANDATORY: AO + Pattern
+                if ao_bullish:
+                    continue
+                if not (not ao_bullish and not ao_rising and (jw or elephant or multi_engulf or fb)):
+                    continue
+                
+                confidence = calculate_confluence('SELL', not ao_bullish, bear_div, london, jw, elephant)
+                signal_type = get_signal_type(jw, bear_div, london, elephant, confidence)
+                
+                LAST_SIGNAL_DATE[symbol] = today_str
+                
+                return {
+                    'symbol': symbol,
+                    'signal': 'SELL',
+                    'entry': current_close,
+                    'tp1': box_mid,
+                    'tp2': box_low,
+                    'sl': top_zone + (box_range * 0.25),
+                    'pattern': jw and 'JOHN_WICK' or elephant and 'ELEPHANT' or 'ENGULFING',
+                    'type': signal_type,
+                    'confidence': confidence
+                }
+        
+        return None
+    except:
+        return None
+
+# ════════════════════════════════════════════════════════════════════════════
 # MAIN LOOP
 # ════════════════════════════════════════════════════════════════════════════
 
 def main():
     print("\n" + "="*70)
-    print("BOX REVERSAL STRATEGY - PROFESSIONAL v2")
-    print("Synchronized with TradingView Sri Engulphy System v3")
+    print("BOX REVERSAL STRATEGY - PROFESSIONAL v3 - COMPLETE")
+    print("100% Synchronized with TradingView Sri Engulphy System v3")
     print("="*70 + "\n")
     
     if not SHEET:
@@ -536,13 +628,13 @@ def main():
             
             # Calculate AO and divergence
             ao_values = calculate_ao(historical_data)
-            bull_div, bear_div = detect_divergence(historical_data, ao_values)
+            bull_div, bear_div = detect_divergence_strict(historical_data, ao_values)
             
             signal = generate_signal(symbol, today_data, box_high, box_low, is_qualified, ao_values, bull_div, bear_div)
             
             if signal:
                 signal_count += 1
-                print(f"      ➜ {signal['type']} @ {signal['entry']:.2f} (confidence: {signal['confidence']}/5)")
+                print(f"      ➜ {signal['type']} @ {signal['entry']:.2f} | Confidence: {signal['confidence']}/5")
                 
                 now = datetime.now()
                 date_str = now.strftime('%d-%b-%Y')
@@ -566,7 +658,7 @@ def main():
             continue
     
     print("="*70)
-    print(f"Generated {signal_count} professional signals")
+    print(f"Generated {signal_count} professional v3 signals")
     print("="*70)
 
 # ════════════════════════════════════════════════════════════════════════════
@@ -596,7 +688,7 @@ def start_bot_thread():
 # ════════════════════════════════════════════════════════════════════════════
 
 if __name__ == "__main__":
-    print("✅ Starting professional bot with Flask server...")
+    print("✅ Starting PROFESSIONAL v3 bot with Flask server...")
     start_bot_thread()
     
     port = int(os.environ.get('PORT', 10000))

@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """
-BOX REVERSAL STRATEGY - PROFESSIONAL v3 - TIMING FIXED
+BOX REVERSAL STRATEGY - PROFESSIONAL v3 - REAL DATA + AUTO-CLOSING
 100% SYNCHRONIZED WITH TRADINGVIEW "Sri Engulphy System v3"
 Features: AO, Divergence, John Wick, Elephant, False Breakout, Confluence Scoring
-FIXED: Better hourly execution, reliable timing, improved threading
+AUTO-CLOSING: Tracks TP/SL hits, auto-closes, updates P&L in Google Sheets
 """
 
 import pandas as pd
@@ -18,6 +18,7 @@ import base64
 import random
 from flask import Flask
 import threading
+import yfinance as yf
 
 # ════════════════════════════════════════════════════════════════════════════
 # FLASK WEB SERVER
@@ -27,7 +28,7 @@ app = Flask(__name__)
 
 @app.route('/')
 def health_check():
-    return {'status': 'ok', 'service': 'nifty-bot-pro-v3-fixed', 'timestamp': datetime.now().isoformat()}, 200
+    return {'status': 'ok', 'service': 'nifty-bot-pro-v3-auto', 'timestamp': datetime.now().isoformat()}, 200
 
 @app.route('/health')
 def health():
@@ -72,21 +73,20 @@ SHEET = setup_google_sheets()
 TELEGRAM_BOT_TOKEN = os.getenv('TELEGRAM_BOT_TOKEN')
 TELEGRAM_CHAT_ID = os.getenv('TELEGRAM_CHAT_ID')
 
-STOCKS = ['NIFTY 50', 'BANK NIFTY', 'SBIN', 'YES BANK', 'PNB', 'BANK OF BARODA', 'HFCL', 'ITI', 'NMDC', 'HIND COPPER', 'INFY', 'TCS']
-
-PRICE_RANGES = {
-    'NIFTY 50': (24000, 24500),
-    'BANK NIFTY': (55500, 57000),
-    'SBIN': (1050, 1150),
-    'YES BANK': (19.5, 21),
-    'PNB': (110, 115),
-    'BANK OF BARODA': (265, 275),
-    'HFCL': (100, 110),
-    'ITI': (300, 320),
-    'NMDC': (140, 160),
-    'HIND COPPER': (1080, 1120),
-    'INFY': (3180, 3250),
-    'TCS': (3650, 3750)
+# NSE stock symbols with .NS suffix
+STOCKS = {
+    'NIFTY 50': '^NSEI',
+    'BANK NIFTY': '^NSEBANK',
+    'SBIN': 'SBIN.NS',
+    'YES BANK': 'YESBANK.NS',
+    'PNB': 'PNB.NS',
+    'BANK OF BARODA': 'BANKBARODA.NS',
+    'HFCL': 'HFCL.NS',
+    'ITI': 'ITI.NS',
+    'NMDC': 'NMDC.NS',
+    'HIND COPPER': 'HINDCOPPER.NS',
+    'INFY': 'INFY.NS',
+    'TCS': 'TCS.NS'
 }
 
 # Time filters (IST)
@@ -94,40 +94,190 @@ LUNCH_START = 11 * 60 + 30
 LUNCH_END = 12 * 60 + 0
 EXPIRY_START = 14 * 60 + 45
 EXPIRY_END = 15 * 60 + 30
+MARKET_CLOSE = 15 * 60 + 15  # 3:15 PM
 
-OPEN_TRADES = {}
+OPEN_TRADES = {}  # {row_num: {symbol, entry, tp1, tp2, sl, signal, type, open_time}}
 LAST_SIGNAL_DATE = {}
+DATA_CACHE = {}
+CACHE_TIME = {}
+BOT_STATS = {'wins': 0, 'losses': 0, 'total_pnl': 0}
 
 # ════════════════════════════════════════════════════════════════════════════
-# MOCK DATA
+# YFINANCE WITH RATE LIMITING FIX
 # ════════════════════════════════════════════════════════════════════════════
 
-def generate_mock_data(symbol, num_candles=500):
-    price_min, price_max = PRICE_RANGES[symbol]
-    base_price = (price_min + price_max) / 2
-    data = []
-    current_price = base_price
+def fetch_stock_data(symbol_name, symbol_code, retries=3, delay=2):
+    """Fetch real data from yfinance with retry logic and caching"""
+    cache_key = symbol_code
+    current_time = datetime.now()
     
-    for i in range(num_candles):
-        change = random.uniform(-0.5, 0.5)
-        current_price += change
-        current_price = max(price_min, min(price_max, current_price))
-        
-        open_price = current_price + random.uniform(-0.2, 0.2)
-        high_price = max(current_price, open_price) + random.uniform(0, 0.3)
-        low_price = min(current_price, open_price) - random.uniform(0, 0.3)
-        close_price = current_price
-        
-        data.append({
-            'timestamp': datetime.now() - timedelta(minutes=num_candles-i),
-            'open': round(open_price, 2),
-            'high': round(high_price, 2),
-            'low': round(low_price, 2),
-            'close': round(close_price, 2),
-            'volume': random.randint(100000, 500000)
-        })
+    # Use cache if < 5 minutes old
+    if cache_key in DATA_CACHE and cache_key in CACHE_TIME:
+        cache_age = (current_time - CACHE_TIME[cache_key]).total_seconds()
+        if cache_age < 300:  # 5 minutes
+            return DATA_CACHE[cache_key]
     
-    return data
+    for attempt in range(retries):
+        try:
+            # Fetch 5-minute data for last 7 days
+            data = yf.download(
+                symbol_code,
+                period='7d',
+                interval='5m',
+                progress=False,
+                timeout=10
+            )
+            
+            if data is None or len(data) == 0:
+                return None
+            
+            # Convert to list of dicts
+            candles = []
+            for idx, row in data.iterrows():
+                candles.append({
+                    'timestamp': idx,
+                    'open': float(row['Open']),
+                    'high': float(row['High']),
+                    'low': float(row['Low']),
+                    'close': float(row['Close']),
+                    'volume': int(row['Volume'])
+                })
+            
+            # Cache the data
+            DATA_CACHE[cache_key] = candles
+            CACHE_TIME[cache_key] = current_time
+            
+            return candles
+            
+        except Exception as e:
+            error_msg = str(e)
+            if "429" in error_msg or "Too Many" in error_msg or "rate" in error_msg.lower():
+                time.sleep(delay)
+                delay *= 2
+            else:
+                return None
+    
+    return None
+
+# ════════════════════════════════════════════════════════════════════════════
+# AUTO-CLOSING LOGIC
+# ════════════════════════════════════════════════════════════════════════════
+
+def check_and_close_trades():
+    """Check all open trades for TP/SL hits and close if needed"""
+    if not SHEET or not OPEN_TRADES:
+        return
+    
+    closed_trades = []
+    current_time = datetime.now()
+    current_minute = current_time.hour * 60 + current_time.minute
+    
+    for row_num, trade in list(OPEN_TRADES.items()):
+        try:
+            symbol_name = trade['symbol']
+            symbol_code = [v for k, v in STOCKS.items() if k == symbol_name][0] if symbol_name in STOCKS.values() else None
+            
+            if not symbol_code:
+                continue
+            
+            # Fetch current price
+            current_data = yf.download(symbol_code, period='1d', interval='1m', progress=False)
+            if current_data is None or len(current_data) == 0:
+                continue
+            
+            current_price = float(current_data.iloc[-1]['Close'])
+            entry = trade['entry']
+            tp1 = trade['tp1']
+            tp2 = trade['tp2']
+            sl = trade['sl']
+            signal_type = trade['signal']
+            
+            # Determine if trade should close
+            should_close = False
+            exit_price = None
+            result = None
+            
+            if signal_type == 'BUY':
+                if current_price >= tp2:  # Hit TP2
+                    should_close = True
+                    exit_price = tp2
+                    pnl = tp2 - entry
+                    result = "WIN - TP2"
+                    BOT_STATS['wins'] += 1
+                elif current_price >= tp1:  # Hit TP1
+                    should_close = True
+                    exit_price = tp1
+                    pnl = tp1 - entry
+                    result = "WIN - TP1"
+                    BOT_STATS['wins'] += 1
+                elif current_price <= sl:  # Hit SL
+                    should_close = True
+                    exit_price = sl
+                    pnl = sl - entry
+                    result = "LOSS - SL"
+                    BOT_STATS['losses'] += 1
+            
+            elif signal_type == 'SELL':
+                if current_price <= tp2:  # Hit TP2
+                    should_close = True
+                    exit_price = tp2
+                    pnl = entry - tp2
+                    result = "WIN - TP2"
+                    BOT_STATS['wins'] += 1
+                elif current_price <= tp1:  # Hit TP1
+                    should_close = True
+                    exit_price = tp1
+                    pnl = entry - tp1
+                    result = "WIN - TP1"
+                    BOT_STATS['wins'] += 1
+                elif current_price >= sl:  # Hit SL
+                    should_close = True
+                    exit_price = sl
+                    pnl = entry - sl
+                    result = "LOSS - SL"
+                    BOT_STATS['losses'] += 1
+            
+            # Auto-close at market close (3:15 PM)
+            if current_minute >= MARKET_CLOSE:
+                should_close = True
+                exit_price = current_price
+                pnl = (entry - exit_price) if signal_type == 'SELL' else (exit_price - entry)
+                if pnl >= 0:
+                    result = "WIN - MARKET CLOSE"
+                    BOT_STATS['wins'] += 1
+                else:
+                    result = "LOSS - MARKET CLOSE"
+                    BOT_STATS['losses'] += 1
+            
+            # Update Google Sheets if closed
+            if should_close and exit_price:
+                update_trade_in_sheets(row_num, exit_price, pnl, result)
+                closed_trades.append((symbol_name, result, pnl))
+                BOT_STATS['total_pnl'] += pnl
+                
+        except Exception as e:
+            continue
+    
+    return closed_trades
+
+def update_trade_in_sheets(row_num, exit_price, pnl, result):
+    """Update trade row in Google Sheets with exit data"""
+    if not SHEET:
+        return
+    
+    try:
+        # Column M (13) = Exit Price, Column N (14) = P&L, Column O (15) = Result
+        SHEET.update_cell(row_num, 13, round(exit_price, 2))
+        SHEET.update_cell(row_num, 14, round(pnl, 2))
+        SHEET.update_cell(row_num, 15, result)
+        
+        if row_num in OPEN_TRADES:
+            del OPEN_TRADES[row_num]
+        
+        print(f"    ✅ Trade closed: {result} | P&L: {pnl:.2f}")
+        
+    except Exception as e:
+        print(f"    ❌ Error updating sheets: {str(e)[:50]}")
 
 # ════════════════════════════════════════════════════════════════════════════
 # AWESOME OSCILLATOR
@@ -135,8 +285,8 @@ def generate_mock_data(symbol, num_candles=500):
 
 def calculate_ao(data, fast=5, slow=34):
     """Awesome Oscillator: SMA5(HL2) - SMA34(HL2)"""
-    if len(data) < slow:
-        return [0] * len(data)
+    if not data or len(data) < slow:
+        return [0] * len(data) if data else []
     
     hl2_values = [(c['high'] + c['low']) / 2 for c in data]
     ao_values = []
@@ -160,7 +310,7 @@ def is_ao_rising(ao_values):
 
 def detect_divergence_strict(data, ao_values, lookback=8):
     """Detect price + AO divergence (strict TV logic)"""
-    if len(data) < lookback or len(ao_values) < lookback:
+    if not data or len(data) < lookback or len(ao_values) < lookback:
         return False, False
     
     recent_data = data[-lookback:]
@@ -240,7 +390,8 @@ def log_signal_to_sheets(date, time_str, stock, signal, signal_type, entry, atr_
             'tp2': tp2,
             'sl': sl,
             'signal': signal,
-            'type': signal_type
+            'type': signal_type,
+            'open_time': datetime.now()
         }
         
         print(f"  ✅ {signal_type} logged to row {row_num} @ {time_str}")
@@ -556,7 +707,7 @@ def generate_signal(symbol, today_data, box_high, box_low, is_qualified, ao_valu
 
 def main():
     print("\n" + "="*70)
-    print("BOX REVERSAL STRATEGY - PROFESSIONAL v3 - TIMING FIXED")
+    print("BOX REVERSAL STRATEGY - PROFESSIONAL v3 - REAL DATA + AUTO-CLOSING")
     print("100% Synchronized with TradingView Sri Engulphy System v3")
     print("="*70 + "\n")
     
@@ -564,20 +715,25 @@ def main():
         print("ERROR: Google Sheets not connected.")
         return
     
+    # Check and close existing trades first
+    print("Checking for trades to close...")
+    closed = check_and_close_trades()
+    if closed:
+        for symbol, result, pnl in closed:
+            print(f"  ✅ {symbol}: {result} | P&L: {pnl:.2f}")
+    print()
+    
     signal_count = 0
     
-    for idx, symbol in enumerate(STOCKS):
+    for symbol_name, symbol_code in STOCKS.items():
         try:
-            print(f"[{idx+1}/{len(STOCKS)}] {symbol}")
+            print(f"{symbol_name}:")
             
-            historical_data = generate_mock_data(symbol, num_candles=500)
-            print(f"{symbol}: Generating mock data...", end=" ")
+            historical_data = fetch_stock_data(symbol_name, symbol_code)
             
             if not historical_data or len(historical_data) == 0:
-                print("NO DATA\n")
+                print(f"  └─ NO DATA\n")
                 continue
-            
-            print(f"✅ Got {len(historical_data)} candles")
             
             box_high, box_low = calculate_box(historical_data)
             if not box_high or not box_low:
@@ -596,7 +752,7 @@ def main():
             ao_values = calculate_ao(historical_data)
             bull_div, bear_div = detect_divergence_strict(historical_data, ao_values)
             
-            signal = generate_signal(symbol, today_data, box_high, box_low, is_qualified, ao_values, bull_div, bear_div)
+            signal = generate_signal(symbol_name, today_data, box_high, box_low, is_qualified, ao_values, bull_div, bear_div)
             
             if signal:
                 signal_count += 1
@@ -607,7 +763,7 @@ def main():
                 time_str = now.strftime('%H:%M %p')
                 
                 row_num = log_signal_to_sheets(
-                    date_str, time_str, symbol, signal['signal'],
+                    date_str, time_str, symbol_name, signal['signal'],
                     signal['type'], signal['entry'], threshold, opening_range, is_qualified,
                     signal['pattern'], signal['sl'], signal['tp1'], signal['tp2'], signal['confidence']
                 )
@@ -617,7 +773,7 @@ def main():
                 print(f"      ➜ No signal")
             
             print()
-            time.sleep(0.5)
+            time.sleep(1)
         
         except Exception as e:
             print(f"  └─ ERROR - {str(e)[:40]}\n")
@@ -625,11 +781,13 @@ def main():
     
     print("="*70)
     print(f"Generated {signal_count} professional signals")
+    print(f"Open trades: {len(OPEN_TRADES)}")
+    print(f"Bot Stats: Wins={BOT_STATS['wins']}, Losses={BOT_STATS['losses']}, P&L={BOT_STATS['total_pnl']:.2f}")
     print(f"Timestamp: {datetime.now().strftime('%Y-%m-%d %H:%M:%S IST')}")
     print("="*70)
 
 # ════════════════════════════════════════════════════════════════════════════
-# BACKGROUND THREAD - FIXED HOURLY EXECUTION
+# BACKGROUND THREAD
 # ════════════════════════════════════════════════════════════════════════════
 
 def run_bot_loop():
@@ -642,7 +800,6 @@ def run_bot_loop():
         current_hour = current_time.hour
         current_minute = current_time.minute
         
-        # Run every hour at minute 0-5
         if current_hour != last_run_hour and current_minute < 5:
             run_count += 1
             print(f"\n{'='*70}")
@@ -662,7 +819,6 @@ def run_bot_loop():
             print(f"Next run at: {next_run.strftime('%H:%M:%S IST')}")
             print(f"{'='*70}\n")
         
-        # Check every 30 seconds for hour change (reduces CPU)
         time.sleep(30)
 
 def start_bot_thread():
@@ -674,12 +830,13 @@ def start_bot_thread():
 # ════════════════════════════════════════════════════════════════════════════
 
 if __name__ == "__main__":
-    print("✅ Starting PROFESSIONAL v3 TIMING-FIXED bot with Flask server...")
+    print("✅ Starting PROFESSIONAL v3 REAL DATA + AUTO-CLOSING bot...")
+    print("✅ Features: yfinance + Auto-close + P&L tracking")
     start_bot_thread()
     
     port = int(os.environ.get('PORT', 10000))
     print(f"✅ Flask server on port {port}")
     print(f"✅ Bot runs hourly at minute 0-5")
-    print(f"✅ Reliable timing enabled\n")
+    print(f"✅ Auto-closing enabled\n")
     
     app.run(host='0.0.0.0', port=port, debug=False, use_reloader=False)
